@@ -1,7 +1,7 @@
 import sys
 import argparse
-from .moonscope import (
-    main as moonscope_main,
+from .modelscope import (
+    main as modelscope_main,
     model_file_download,
     dataset_file_download,
     snapshot_download as modelscope_snapshot_download,
