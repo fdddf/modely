@@ -178,7 +178,7 @@ def get_snapshot(snapshot_id: str, *, repository: SnapshotRepository) -> Approve
     return repository.get_snapshot(snapshot_id)
 
 
-def list_snapshots(asset_id: str, *, repository: SnapshotRepository) -> list[ApprovedSnapshot]:
+def list_snapshots(asset_id: str = "", *, repository: SnapshotRepository) -> list[ApprovedSnapshot]:
     return repository.list_snapshots(asset_id)
 
 

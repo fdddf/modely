@@ -175,8 +175,8 @@ def list_snapshots_route(service, *, request_id: str = "req_unknown", **query_pa
     GET /api/v1/snapshots?asset_id=
     """
 
-    asset_id = query_params.get("asset_id", "").strip()
-    snapshots = service.list_snapshots(asset_id=asset_id) if asset_id else []
+    asset_id = query_params.get("asset_id", "").strip() or None
+    snapshots = service.list_snapshots(asset_id=asset_id)
     return success_response(
         {"snapshots": [s.to_dict() for s in snapshots], "count": len(snapshots)},
         request_id=request_id,
