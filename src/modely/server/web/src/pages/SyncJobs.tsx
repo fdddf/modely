@@ -30,14 +30,7 @@ export default function SyncJobs() {
 
   const retry = async (j: SyncJobData) => {
     try {
-      const meta = (j.metadata as Record<string,unknown> | null) || {}
-      const res = meta.resource as string || ''
-      // Extract resource from the job's worker_result if available
-      const wr = meta.worker_result as Record<string,unknown> | null
-      const resUri = (wr?.manifest as Record<string,unknown> | null)?.repo_id
-        ? `ms://models/${(wr?.manifest as Record<string,unknown>).repo_id}`
-        : (meta.resource as string) || `ms://models/qwen/Qwen2.5-0.5B-Instruct`
-      const r = await createSyncJob({ target_id: j.target_id, resource: resUri })
+      const r = await createSyncJob({ target_id: j.target_id, resource: j.resource })
       setJobs(prev => [r.data, ...prev])
       setError('')
     } catch (e: unknown) { setError((e as Error).message) }
@@ -57,30 +50,54 @@ export default function SyncJobs() {
     try {
       const j = await getSyncJob(id)
       setSelectedJob(j.data)
-      // Build a readable summary from job metadata
-      const wr = (j.data.metadata as Record<string,unknown> | null)?.worker_result as Record<string,unknown> | null
+      const lines: string[] = []
+
+      // Basic job info
+      lines.push(`Job ID:     ${j.data.id}`)
+      lines.push(`Target:     ${j.data.target_id || '-'}`)
+      lines.push(`Resource:   ${j.data.resource || '-'}`)
+      lines.push(`Status:     ${j.data.status}`)
+      lines.push(`Attempts:   ${j.data.attempts}`)
+
+      // Error info (when failed)
+      if (j.data.error) {
+        lines.push(`\n── Error ──`)
+        lines.push(j.data.error)
+      }
+
+      // Worker result details (from metadata)
+      const wr = (j.data.metadata as Record<string,unknown> | null)?.result as Record<string,unknown> | null
       if (wr) {
-        const lines: string[] = []
-        lines.push(`Status: ${wr.status}`)
-        lines.push(`Asset ID: ${wr.asset_id || '-'}`)
-        lines.push(`Version ID: ${wr.version_id || '-'}`)
+        if (wr.asset_id) lines.push(`\nAsset ID:   ${wr.asset_id}`)
+        if (wr.version_id) lines.push(`Version ID:  ${wr.version_id}`)
+        if (wr.local_path) lines.push(`Local Path:  ${wr.local_path}`)
+        if (wr.error && wr.error !== j.data.error) {
+          lines.push(`\n── Worker Error ──`)
+          lines.push(String(wr.error))
+        }
+
         const manifest = wr.manifest as Record<string,unknown> | null
         if (manifest) {
-          const mf = manifest.metadata as Record<string,unknown> | null
-          lines.push(`Storage: ${manifest.local_path || '-'}`)
+          lines.push(`\n── Manifest ──`)
+          if (manifest.local_path) lines.push(`Storage:     ${manifest.local_path}`)
           const files = wr.files as Array<Record<string,unknown>> | null
           if (files && files.length > 0) {
-            lines.push(`\nDownloaded files (${files.length}):`)
+            lines.push(`Files:       ${files.length}`)
             for (const f of files) {
               const lp = (f.local_path as string) || (f.uri as string) || '-'
-              lines.push(`  ${f.path}  (${lp})`)
+              lines.push(`  ${f.path}  →  ${lp}`)
             }
           }
         }
-        setLogs(lines.join('\n'))
-      } else {
-        setLogs(JSON.stringify(j.data, null, 2))
       }
+
+      // Fallback: raw JSON dump if nothing parsed
+      if (lines.length <= 5 && !j.data.error) {
+        lines.push('')
+        lines.push(JSON.stringify(j.data, null, 2))
+      }
+
+      setLogs(lines.join('\n'))
     } catch (e: unknown) { setError((e as Error).message) }
   }
 
@@ -107,7 +124,7 @@ export default function SyncJobs() {
             <td style={{padding:8,cursor:'pointer',fontSize:'0.82rem'}} onClick={() => viewLogs(j.id)}><code>{j.resource || '-'}</code></td>
             <td style={{padding:8,cursor:'pointer'}} onClick={() => viewLogs(j.id)}>{j.status}</td>
             <td style={{padding:8,cursor:'pointer'}} onClick={() => viewLogs(j.id)}>{j.attempts}</td>
-            <td style={{padding:8,color:j.error?'red':'#999',cursor:'pointer'}} onClick={() => viewLogs(j.id)}>{j.error ? j.error.slice(0, 80) : '-'}</td>
+            <td style={{padding:8,color:j.error?'red':'#999',cursor:'pointer',maxWidth:280,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} onClick={() => viewLogs(j.id)} title={j.error || ''}>{j.error ? j.error.slice(0, 120) : '-'}</td>
             <td style={{padding:8}}>
               <button onClick={(e) => { e.stopPropagation(); retry(j) }}
                 style={{ padding: '4px 10px', fontSize: '0.75rem', background: '#1976d2', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>

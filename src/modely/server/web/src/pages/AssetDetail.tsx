@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getAsset, getAssetFiles, getDownloadUrl, getFilePreview } from '../api/client'
+import { getAsset, getAssetFiles, getDownloadUrl, getFilePreview, createSnapshot } from '../api/client'
 import type { AssetItem, AssetFile, DownloadUrlData, FilePreviewData } from '../api/types'
 
 // -- helpers ----------------------------------------------------------------
@@ -10,6 +10,18 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+function downloadFileContent(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename.split('/').pop() || filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -369,6 +381,9 @@ export default function AssetDetail() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
   const [viewMode, setViewMode] = useState<'tree' | 'table'>('tree')
+  const [snapshotError, setSnapshotError] = useState('')
+  const [snapshotOk, setSnapshotOk] = useState('')
+  const [creatingSnapshot, setCreatingSnapshot] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -395,6 +410,32 @@ export default function AssetDetail() {
       setPreviewLoading(false)
     }
   }, [id])
+
+  const handleCreateSnapshot = useCallback(async () => {
+    if (!id || !asset) return
+    const channel = prompt('Channel name (dev/staging/production)?', 'dev')
+    if (!channel) return
+    setCreatingSnapshot(true)
+    setSnapshotError('')
+    setSnapshotOk('')
+    try {
+      // Build a version-like ID from asset fields
+      const versionId = `${asset.id}:${asset.revision || 'latest'}`
+      // Use checksum as manifest_digest, or fallback to id-based hash
+      const manifestDigest = asset.checksum || asset.id
+      await createSnapshot({
+        asset_id: asset.id,
+        version_id: versionId,
+        manifest_digest: manifestDigest,
+        channel_name: channel,
+      })
+      setSnapshotOk(`Snapshot created in "${channel}" channel`)
+    } catch (e: unknown) {
+      setSnapshotError((e as Error).message)
+    } finally {
+      setCreatingSnapshot(false)
+    }
+  }, [id, asset])
 
   // -- render states --------------------------------------------------------
   if (loading) return <p>Loading...</p>
@@ -472,6 +513,10 @@ export default function AssetDetail() {
         style={{ marginBottom: 12, background: 'transparent', color: '#1976d2', border: '1px solid #1976d2', padding: '4px 12px', borderRadius: 4, cursor: 'pointer' }}
       >← Back to Assets</button>
 
+      {/* Snapshot feedback */}
+      {snapshotError && <div style={{ color: '#f44336', marginBottom: 10, padding: '8px 12px', background: '#ffeef0', borderRadius: 6, fontSize: '0.85rem' }}>{snapshotError}</div>}
+      {snapshotOk && <div style={{ color: '#2e7d32', marginBottom: 10, padding: '8px 12px', background: '#e8f5e9', borderRadius: 6, fontSize: '0.85rem' }}>{snapshotOk}</div>}
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>{asset.repo_id}</h2>
         <span style={{ background: '#1976d2', color: '#fff', padding: '2px 10px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase' }}>{asset.source}</span>
@@ -497,6 +542,17 @@ export default function AssetDetail() {
             {govRisk} risk
           </span>
         )}
+        <span style={{ flex: 1 }} />
+        <button
+          onClick={handleCreateSnapshot}
+          disabled={creatingSnapshot}
+          style={{
+            padding: '6px 16px', fontSize: '0.82rem', fontWeight: 600,
+            background: creatingSnapshot ? '#ccc' : '#4caf50', color: '#fff',
+            border: 'none', borderRadius: 6, cursor: creatingSnapshot ? 'default' : 'pointer',
+            opacity: creatingSnapshot ? 0.7 : 1,
+          }}
+        >{creatingSnapshot ? 'Creating...' : '📸 Create Snapshot'}</button>
       </div>
 
       {/* -- Metadata cards ------------------------------------------------ */}
@@ -529,9 +585,16 @@ export default function AssetDetail() {
             <h4 style={{ margin: 0, fontSize: '0.85rem' }}>
               Preview: <code style={{ fontSize: '0.82rem' }}>{selectedFile}</code>
             </h4>
-            <button onClick={() => { setSelectedFile(null); setPreviewData(null); setPreviewError(''); }}
-              style={{ background: '#eee', color: '#333', border: '1px solid #ccc', padding: '4px 12px', borderRadius: 4 }}
-            >Close</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {previewData && previewData.previewable && previewData.content !== null && selectedFile && (
+                <button onClick={() => downloadFileContent(selectedFile, previewData.content!)}
+                  style={{ background: '#1976d2', color: '#fff', border: 'none', padding: '4px 12px', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
+                >Download</button>
+              )}
+              <button onClick={() => { setSelectedFile(null); setPreviewData(null); setPreviewError(''); }}
+                style={{ background: '#eee', color: '#333', border: '1px solid #ccc', padding: '4px 12px', borderRadius: 4 }}
+              >Close</button>
+            </div>
           </div>
 
           {previewLoading && <p style={{ color: '#666' }}>Loading preview...</p>}

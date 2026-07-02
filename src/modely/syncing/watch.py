@@ -331,7 +331,15 @@ def _ms_fingerprint(target: Dict, token: Optional[str]) -> str:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
     if not files:
-        raise RuntimeError(f"Could not list files for ModelScope repository: {target['repo_id']}")
+        # File list API returned empty — fall back to repo metadata fingerprint
+        # (some repos like auto-created lora models have no file listing)
+        try:
+            from ..modelscope import get_repo_info
+            info = get_repo_info(target["repo_id"], revision=target.get("revision"), repo_type=target.get("repo_type", "model"))
+            fields = f"{info.last_modified or ''}|{info.downloads}|{info.likes}"
+            return hashlib.sha256(fields.encode("utf-8")).hexdigest()
+        except Exception:
+            raise RuntimeError(f"Could not list files or fetch metadata for ModelScope repository: {target['repo_id']}")
     return _file_digest(files)
 
 
@@ -452,7 +460,12 @@ def check_target(target: Dict, state: Dict) -> Dict:
             state[key] = entry
             return {"key": key, "target": target, "status": "downloaded", "path": download_path}
 
-        state[key] = {**previous, "last_checked_at": _now_iso(), "error": None}
+        state[key] = {
+            **previous,
+            "last_checked_at": _now_iso(),
+            "last_downloaded_at": previous.get("last_downloaded_at"),
+            "error": None,
+        }
         return {
             "key": key,
             "target": target,

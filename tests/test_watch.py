@@ -172,12 +172,14 @@ def test_modelscope_probe_warning_is_silenced(monkeypatch, capsys):
     assert "Warning:" not in capsys.readouterr().out
 
 
-def test_modelscope_snapshot_still_errors_when_listing_unavailable(monkeypatch):
-    target = watch.normalize_target({"source": "ms", "repo_type": "dataset", "repo_id": "owner/data"})
+def test_modelscope_empty_files_falls_back_to_repo_info(monkeypatch):
+    """When file listing returns empty, fall back to repo metadata fingerprint."""
+    target = watch.normalize_target({"source": "ms", "repo_type": "model", "repo_id": "owner/data"})
     monkeypatch.setattr(watch, "_modelscope_files", lambda _, __: [])
 
-    with pytest.raises(RuntimeError, match="Could not list files"):
-        watch._ms_fingerprint(target, token=None)
+    # Should NOT raise — falls back to repo info
+    fp = watch._ms_fingerprint(target, token=None)
+    assert isinstance(fp, str) and len(fp) == 64  # SHA256 hex digest
 
 
 def test_check_drift_updates_state(tmp_path, monkeypatch):

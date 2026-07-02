@@ -79,7 +79,26 @@ class LocalMirrorWorker:
         include = job.metadata.get("include")
         exclude = job.metadata.get("exclude")
         checksum = bool(job.metadata.get("checksum", True))
-        selected_files = filter_files(self.adapter.list_files(ref), include, exclude)
+        try:
+            raw_files = self.adapter.list_files(ref)
+        except Exception as exc:
+            raise ValueError(f"Failed to list files for {resource} (revision: {revision}): {exc}") from exc
+        if not raw_files:
+            raise ValueError(
+                f"No files found for {resource} (revision: {revision}). "
+                f"The revision may not exist, or the repository may be empty."
+            )
+        selected_files = filter_files(raw_files, include, exclude)
+        if not selected_files:
+            pattern_info = ""
+            if include:
+                pattern_info += f" include={include}"
+            if exclude:
+                pattern_info += f" exclude={exclude}"
+            raise ValueError(
+                f"No files matched filter patterns for {resource} (revision: {revision}). "
+                f"Found {len(raw_files)} remote file(s) but all were filtered out.{pattern_info}"
+            )
         asset_id = _asset_id(ref.source, ref.repo_type, ref.repo_id)
         version_id = _version_id(asset_id, revision, job.identity.idempotency_key or job.id)
         stored_for_manifest: list[StoredObject] = []

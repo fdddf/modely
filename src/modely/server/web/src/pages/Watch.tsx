@@ -74,6 +74,10 @@ function buildResourceUri(source: string, repo_type: string, repo_id: string): s
   return `${source}://${repo_type || 'model'}s/${repo_id}`
 }
 
+function isSyncedUnchanged(t: WatchTarget): boolean {
+  return !!(t.last_downloaded_at && t.fingerprint && t.drift_status === 'unchanged')
+}
+
 // ── Discover tab ──────────────────────────────────────────────────────────────
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30]
@@ -138,21 +142,19 @@ function DiscoverTab({ watchedKeys, onAdded }: {
   }
 
   const handleAdd = async (r: RemoteSearchResult) => {
-    const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:${r.last_modified || 'main'}`
+    const revision = 'main'
+    const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:${revision}`
     setAddingKey(key)
     try {
       const target = {
         source: r.source,
         repo_type: r.repo_type,
         repo_id: r.id || r.name || '',
-        revision: 'main',
+        revision,
       }
       await addWatchTarget(DEFAULT_WATCH_CONFIG, target as Record<string, unknown>)
       setAddedKeys(prev => new Set(prev).add(key))
       onAdded()
-      // Also trigger a sync job so the asset appears in /sync-jobs
-      const resource = buildResourceUri(r.source, r.repo_type, r.id || r.name || '')
-      await createSyncJob({ target_id: key, resource, revision: 'main' })
     } catch (e: unknown) {
       setSearchError((e as Error).message)
     }
@@ -160,7 +162,7 @@ function DiscoverTab({ watchedKeys, onAdded }: {
   }
 
   const isAdded = (r: RemoteSearchResult) => {
-    const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:${r.last_modified || 'main'}`
+    const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:main`
     return watchedKeys.has(key) || addedKeys.has(key)
   }
 
@@ -293,7 +295,7 @@ function DiscoverTab({ watchedKeys, onAdded }: {
           <tbody>
             {results.map((r, idx) => {
               const added = isAdded(r)
-              const adding = addingKey === `${r.source}:${r.repo_type}:${r.id || r.name || ''}:${r.last_modified || 'main'}`
+              const adding = addingKey === `${r.source}:${r.repo_type}:${r.id || r.name || ''}:main`
               return (
                 <tr key={idx}>
                   <td style={cellEllipsisStyle}>
@@ -467,6 +469,20 @@ function TargetsTab({ targets, loading, error, syncingKeys, onRefresh, onCheck, 
                   <td style={{ padding: 10, borderBottom: '1px solid #eee', whiteSpace: 'nowrap' }}>
                     {syncingKeys.has(t.key) ? (
                       <span style={{ color: '#1976d2', fontSize: '0.78rem', fontWeight: 600 }}>Syncing...</span>
+                    ) : isSyncedUnchanged(t) ? (
+                      <>
+                        <span style={{ color: '#2e7d32', fontSize: '0.78rem', fontWeight: 600, marginRight: 6 }}>
+                          Synced ✓
+                        </span>
+                        <button onClick={(e) => onSync(t, e)}
+                          style={{ padding: '2px 6px', fontSize: '0.68rem', background: 'transparent', color: '#1976d2', border: '1px solid #1976d2', borderRadius: 4, cursor: 'pointer', marginRight: 4 }}>
+                          Re-sync
+                        </button>
+                        <button onClick={(e) => onRemove(t, e)}
+                          style={{ padding: '4px 8px', fontSize: '0.72rem', background: '#f44336', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>
+                          Remove
+                        </button>
+                      </>
                     ) : (
                       <>
                         <button onClick={(e) => onSync(t, e)}

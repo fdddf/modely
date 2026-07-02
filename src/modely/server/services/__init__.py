@@ -106,10 +106,16 @@ def _sync_result_to_cache(job: dict, result: Any) -> None:
 def _update_watch_fingerprint(
     source: str, repo_type: str, repo_id: str, revision: str, local_path: str
 ) -> None:
-    """Update the last-checked fingerprint for a matching watch target."""
+    """Update the last-checked fingerprint for a matching watch target.
+
+    Writes to BOTH the watch config file (targets array, for compatibility)
+    AND the watch state file (state_file in config) so that
+    ``list_watch_targets()`` picks up ``last_downloaded_at`` after a sync.
+    """
     import json
     import hashlib
     import os
+    from datetime import datetime, timezone
     from pathlib import Path
 
     # Look for watch config files
@@ -119,7 +125,9 @@ def _update_watch_fingerprint(
             with open(cfg_path, "r") as f:
                 cfg = json.load(f)
             targets = cfg.get("targets", [])
-            updated = False
+            matched_key = None
+            fp_hash = None
+            now_iso = None
             for t in targets:
                 if (t.get("source") == source and t.get("repo_id") == repo_id
                         and t.get("repo_type", "model") == repo_type
@@ -139,15 +147,45 @@ def _update_watch_fingerprint(
                             fp_hash = hashlib.sha256(
                                 "\n".join(file_hashes).encode()
                             ).hexdigest()[:16]
+                            now_iso = datetime.now(timezone.utc).isoformat()
                             t["fingerprint"] = fp_hash
-                            from datetime import datetime, timezone
-                            t["last_checked_at"] = datetime.now(timezone.utc).isoformat()
-                            t["last_downloaded_at"] = t["last_checked_at"]
-                            updated = True
-            if updated:
+                            t["last_checked_at"] = now_iso
+                            t["last_downloaded_at"] = now_iso
+                            matched_key = f"{source}:{repo_type}:{repo_id}:{revision}"
+                            break  # only one matching target per config
+
+            if matched_key and fp_hash and now_iso:
                 cfg["targets"] = targets
+                # (1) Write updated targets back to config file
                 with open(cfg_path, "w") as f:
                     json.dump(cfg, f, indent=2)
+
+                # (2) Also update the watch STATE file so list_watch_targets()
+                #     can see last_downloaded_at (it reads from the state file,
+                #     not the config targets).
+                state_file = cfg.get("state_file")
+                if state_file:
+                    state_file = os.path.expanduser(state_file)
+                    try:
+                        state: dict = {}
+                        if os.path.exists(state_file):
+                            with open(state_file, "r") as f:
+                                state = json.load(f)
+                        previous = state.get(matched_key, {})
+                        state[matched_key] = {
+                            **previous,
+                            "fingerprint": fp_hash,
+                            "last_checked_at": now_iso,
+                            "last_downloaded_at": now_iso,
+                            "last_download_path": str(local_path),
+                            "error": None,
+                        }
+                        os.makedirs(os.path.dirname(state_file), exist_ok=True)
+                        with open(state_file, "w") as f:
+                            json.dump(state, f, indent=2, sort_keys=True)
+                            f.write("\n")
+                    except Exception:
+                        pass  # best-effort; sync still succeeded
         except Exception:
             pass
 
@@ -246,19 +284,85 @@ class DevNullServices:
     # -- SnapshotRepository (reproducibility) ------------------------------------
 
     def list_snapshots(self, asset_id: str | None = None) -> list[Any]:
-        return []
+        snaps = list(self._snapshots.values())
+        if asset_id:
+            snaps = [s for s in snaps if getattr(s, "asset_id", "") == asset_id]
+        return snaps
 
     def get_snapshot(self, snapshot_id: str) -> Any | None:
-        return None
+        return self._snapshots.get(snapshot_id)
 
     def create_snapshot(self, **kwargs: Any) -> Any:
-        return _empty_stub(id="stub-snapshot", asset_id="", version_id="", manifest_digest="", channel="latest", created_by="dev", created_at="")
+        import uuid
+        from datetime import datetime, timezone
 
-    def promote_snapshot(self, snapshot_id: str, channel_name: str) -> Any:
-        return _empty_stub()
+        snapshot_id = kwargs.get("id") or f"snap-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        snap = _Stub(
+            id=snapshot_id,
+            tenant_scope=kwargs.get("tenant_scope", "default"),
+            asset_id=kwargs.get("asset_id", ""),
+            version_id=kwargs.get("version_id", ""),
+            manifest_digest=kwargs.get("manifest_digest", ""),
+            channel=kwargs.get("channel_name", "dev"),
+            created_by=kwargs.get("created_by", ""),
+            created_at=now,
+            policy_decision_ref=kwargs.get("policy_decision_ref"),
+            approval_ref=kwargs.get("approval_ref"),
+        )
+        self._snapshots[snapshot_id] = snap
+        return snap
 
-    def rollback_snapshot(self, snapshot_id: str, reason: str) -> Any:
-        return _empty_stub()
+    def promote_snapshot(self, snapshot_id: str, channel_name: str, **kwargs: Any) -> Any:
+        snap = self._snapshots.get(snapshot_id)
+        if snap is None:
+            raise ValueError(f"Snapshot not found: {snapshot_id}")
+        # Clone the snapshot with the new channel
+        import uuid
+        from datetime import datetime, timezone
+
+        new_id = f"snap-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        promoted = _Stub(
+            id=new_id,
+            tenant_scope=getattr(snap, "tenant_scope", "default"),
+            asset_id=getattr(snap, "asset_id", ""),
+            version_id=getattr(snap, "version_id", ""),
+            manifest_digest=getattr(snap, "manifest_digest", ""),
+            channel=channel_name,
+            created_by=kwargs.get("promoted_by", getattr(snap, "created_by", "")),
+            created_at=now,
+            policy_decision_ref=getattr(snap, "policy_decision_ref", None),
+            approval_ref=getattr(snap, "approval_ref", None),
+        )
+        self._snapshots[new_id] = promoted
+        return promoted
+
+    def rollback_snapshot(self, snapshot_id: str, reason: str | None = None, **kwargs: Any) -> Any:
+        snap = self._snapshots.get(snapshot_id)
+        if snap is None:
+            raise ValueError(f"Snapshot not found: {snapshot_id}")
+        # Rollback: create a new snapshot pointing to the same version, with the same channel
+        import uuid
+        from datetime import datetime, timezone
+
+        new_id = f"snap-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        rolled = _Stub(
+            id=new_id,
+            tenant_scope=getattr(snap, "tenant_scope", "default"),
+            asset_id=getattr(snap, "asset_id", ""),
+            version_id=getattr(snap, "version_id", ""),
+            manifest_digest=getattr(snap, "manifest_digest", ""),
+            channel=kwargs.get("channel_name", getattr(snap, "channel", "dev")),
+            created_by=kwargs.get("rolled_back_by", getattr(snap, "created_by", "")),
+            created_at=now,
+            policy_decision_ref=getattr(snap, "policy_decision_ref", None),
+            approval_ref=getattr(snap, "approval_ref", None),
+            metadata={"rollback_reason": reason or "", "rolled_back_from": snapshot_id},
+        )
+        self._snapshots[new_id] = rolled
+        return rolled
 
     def snapshot_history(self, snapshot_id: str) -> list[Any]:
         return []
@@ -282,8 +386,9 @@ class DevNullServices:
     # -- Sync jobs ---------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        """Initialise in-memory job store."""
+        """Initialise in-memory job and snapshot stores."""
         object.__setattr__(self, "_jobs", {})
+        object.__setattr__(self, "_snapshots", {})
 
     def create_sync_job(self, **kwargs: Any) -> Any:
         from datetime import datetime, timezone

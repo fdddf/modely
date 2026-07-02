@@ -108,6 +108,7 @@ def get_sync_job(service, job_id: str, *, request_id: str = "req_unknown") -> di
     job_response = SyncJobResponse(
         id=job_dict.get("id", job_id),
         target_id=job_dict.get("target_id", identity.get("target_id", "")),
+        resource=job_dict.get("resource", identity.get("resource", "")),
         status=job_dict.get("status", "unknown"),
         action=job_dict.get("action", "sync"),
         attempts=job_dict.get("attempts", 0),
@@ -130,19 +131,57 @@ def get_sync_job_logs(service, job_id: str, *, request_id: str = "req_unknown") 
         return error_response("not_found", f"Sync job not found: {job_id}", request_id=request_id)
 
     job_dict = job.to_dict() if hasattr(job, "to_dict") else dict(job)
-    # Phase 1 worker stores result in job metadata; extract events if present
     meta = job_dict.get("metadata", {})
     result = meta.get("result", {})
-    events = result.get("events", []) if isinstance(result, dict) else []
-    if not events and isinstance(result, dict):
-        # Fallback: construct a single summary event from the result
-        events = [{"timestamp": result.get("timestamp", ""), "event": result.get("status", "synced"), "details": result}]
+    events: list = []
+
+    if isinstance(result, dict):
+        # Build structured events from the worker result
+        now_iso = job_dict.get("updated_at") or job_dict.get("created_at") or ""
+
+        # 1. Job lifecycle event
+        events.append({
+            "timestamp": now_iso,
+            "event": job_dict.get("status", "unknown"),
+            "job_id": job_id,
+            "attempt": job_dict.get("attempts", 0),
+        })
+
+        # 2. Error event (when failed)
+        error_msg = job_dict.get("error") or result.get("error")
+        if error_msg:
+            events.append({
+                "timestamp": now_iso,
+                "event": "error",
+                "message": error_msg,
+                "source": "worker_result" if result.get("error") else "job",
+            })
+
+        # 3. Asset info (when synced)
+        if result.get("asset_id"):
+            events.append({
+                "timestamp": now_iso,
+                "event": "asset_created",
+                "asset_id": result.get("asset_id"),
+                "version_id": result.get("version_id"),
+                "file_count": len(result.get("files", [])),
+            })
+
+        # 4. File-level events (when files were downloaded)
+        for f in result.get("files", []) or []:
+            events.append({
+                "timestamp": now_iso,
+                "event": "file_downloaded",
+                "path": f.get("path", ""),
+                "size": f.get("size", 0),
+                "uri": f.get("uri") or f.get("local_path") or "",
+            })
 
     log_response = SyncJobLogResponse(
         job_id=job_id,
         status=job_dict.get("status", "unknown"),
         events=events,
-        error=job_dict.get("error"),
+        error=job_dict.get("error") or result.get("error") if isinstance(result, dict) else job_dict.get("error"),
         metadata={"source": "job_metadata", "diagnostic_mode": True},
     )
     return success_response(log_response.to_dict(), request_id=request_id)
@@ -151,10 +190,11 @@ def get_sync_job_logs(service, job_id: str, *, request_id: str = "req_unknown") 
 def _job_to_response(job_dict: dict) -> dict:
     """Normalize a job dict/DTO into a SyncJobResponse dict."""
     d = job_dict.to_dict() if hasattr(job_dict, "to_dict") else dict(job_dict)
+    identity = d.get("identity", {})
     return SyncJobResponse(
         id=d.get("id", ""),
-        target_id=d.get("target_id", ""),
-        resource=d.get("resource", ""),
+        target_id=d.get("target_id", identity.get("target_id", "")),
+        resource=d.get("resource", identity.get("resource", "")),
         status=d.get("status", "unknown"),
         action=d.get("action", "sync"),
         attempts=d.get("attempts", 0),

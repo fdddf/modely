@@ -107,14 +107,17 @@ def get_model_files_url(model_id: str, revision: str, endpoint: Optional[str] = 
 
 
 def get_dataset_files_url(dataset_id: str, revision: str, endpoint: Optional[str] = None):
-    """Get the URL to list dataset files."""
+    """Get the URL to list dataset files.
+
+    ModelScope uses ``/repo/tree`` for datasets (``/repo/files`` is for models).
+    """
     dataset_id_encoded = urllib.parse.quote(dataset_id, safe='/')
     revision = urllib.parse.quote(revision, safe='') if revision else 'master'
 
     if not endpoint:
         endpoint = get_endpoint()
 
-    return f"{endpoint}/api/v1/datasets/{dataset_id_encoded}/repo/files?Revision={revision}"
+    return f"{endpoint}/api/v1/datasets/{dataset_id_encoded}/repo/tree?Revision={revision}"
 
 
 def file_integrity_validation(file_path: str, expected_hash: str):
@@ -454,7 +457,15 @@ class HubApi:
             data = response.json()
             
             # Extract files from the response - adjust based on actual API response format
-            files = data.get('Data', {}).get('Files', []) if isinstance(data, dict) else []
+            if isinstance(data, dict):
+                data_section = data.get('Data')
+                files = data_section.get('Files') if isinstance(data_section, dict) else None
+            else:
+                files = None
+            # .get('Files') may return None even when the key exists;
+            # ensure we always have a list.
+            if not isinstance(files, list):
+                files = []
             
             # Format files to match expected structure
             repo_files = []
@@ -511,7 +522,9 @@ class HubApi:
 
             # Extract files from the response
             data_dict = data.get('Data') if isinstance(data, dict) else None
-            files = data_dict.get('Files', []) if isinstance(data_dict, dict) else []
+            files = data_dict.get('Files') if isinstance(data_dict, dict) else None
+            if not isinstance(files, list):
+                files = []
 
             # Format files to match expected structure
             repo_files = []

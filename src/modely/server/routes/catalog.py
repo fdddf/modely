@@ -203,21 +203,35 @@ def _build_assets_summary(raw_assets):
 def _derive_risk_level(item) -> str:
     """Derive a basic risk level from asset metadata for display purposes.
 
-    Heuristics (dev mode only; production uses governance/policy engine):
-      - ``high``: no license AND empty cache (no files)
-      - ``medium``: missing license OR empty cache OR no tags
-      - ``low``: has license + tags + large file count (harder to audit)
-      - ``unknown``: everything else
+    Uses the same license risk classification as the governance policy engine
+    so the list page and detail page agree on risk levels.  When an asset has
+    no license the risk is driven by other signals (empty cache, no tags).
     """
-    lic = _field(item, "license")
+    from ...governance.policy_engine import _LICENSE_RISK
+
+    lic = (_field(item, "license") or "").strip()
     fc = _field(item, "file_count") or 0
     tags = _field(item, "tags") or []
-    missing_license = not lic
-    empty_cache = fc == 0
 
-    if missing_license and empty_cache:
+    # Classify license risk using the same table as the policy engine
+    license_risk = _LICENSE_RISK.get(lic.lower(), "high") if lic else None
+
+    empty_cache = fc == 0
+    no_tags = not tags
+
+    if license_risk is not None:
+        # Bump risk up one level for missing tags / empty cache
+        risk_order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        base = risk_order.get(license_risk, 2)
+        if (empty_cache or no_tags) and base < 3:
+            base += 1
+        reversed_order = {v: k for k, v in risk_order.items()}
+        return reversed_order.get(base, "medium")
+
+    # No license at all
+    if empty_cache and no_tags:
         return "high"
-    if missing_license or empty_cache or not tags:
+    if empty_cache or no_tags:
         return "medium"
     if fc > 50:
         return "low"

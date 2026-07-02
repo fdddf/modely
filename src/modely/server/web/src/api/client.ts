@@ -60,6 +60,7 @@ export async function getSyncLogs(id: string) { return api.get<SyncJobLogsData>(
 
 export async function listSnapshots(assetId?: string) { return api.get<SnapshotListData>('/api/v1/snapshots', assetId ? { asset_id: assetId } : undefined); }
 export async function getSnapshot(id: string) { return api.get<SnapshotData>(`/api/v1/snapshots/${id}`); }
+export async function createSnapshot(payload: { asset_id: string; version_id: string; manifest_digest: string; channel_name?: string }) { return api.post<SnapshotData>('/api/v1/snapshots/create', payload); }
 export async function promoteSnapshot(snapshot_id: string, channel_name: string) { return api.post('/api/v1/snapshots/promote', { snapshot_id, channel_name }); }
 export async function rollbackSnapshot(id: string, reason: string) { return api.post(`/api/v1/snapshots/${id}/rollback`, { reason }); }
 

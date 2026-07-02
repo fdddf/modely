@@ -97,10 +97,14 @@ Future governance improvements should continue strengthening:
 - 💾 **Smart caching**: Avoid duplicate downloads with unified cache system and dry-run duplicate blob reporting
 - 🗂️ **Local asset catalog**: Inventory local directories or modely cache entries with optional score/scan enrichment, snapshots, diffs, exports, and policy gates
 - 🗂️ **Cache management**: CLI commands to view, list, clean, configure, and inspect duplicate cache files
-- 🏢 **Enterprise platform**: Built-in REST API server (47+ endpoints), governance (RBAC, approvals, policy engine, audit, quotas), reproducibility (lockfiles, manifest diff, approved snapshots, CI gates), integrations (MLflow, DVC, CI/CD), and intelligence (search, recommendations, analytics, compliance reports)
+- 🏢 **Enterprise platform**: Built-in REST API server (57+ endpoints), governance (RBAC, approvals, policy engine, audit, quotas), reproducibility (lockfiles, manifest diff, approved snapshots, CI gates), integrations (MLflow, DVC, CI/CD), and intelligence (search, recommendations, analytics, compliance reports)
 - 🔑 **Enterprise auth**: Service accounts, API tokens with scoped permissions, multi-tenant isolation, and dev/basic auth modes
 - 🌐 **Web UI**: React SPA dashboard for asset browsing, sync management, CI gate evaluation, and analytics (served from `modely-server`)
 - 🖥️ **Enterprise CLI**: `snapshot`, `manifest-diff`, `resolve-approved`, `install-approved`, `token-create/rotate/revoke`, `recommend`, `alternatives`, `graph`, `catalog-gate` commands
+- 🩺 **Governance engine**: RBAC permission model, approval workflow (submit→approve/reject/cancel), policy evaluation with block/warn/require_approval decisions, audit event recording, quota enforcement, and credential lifecycle management
+- 🔎 **Web asset discovery**: Cross-platform search from the Watch UI (Discover tab) with pagination (10/20/30 per page), filtering by source and repo type, and one-click "Add to Watch" with automatic sync job creation
+- 📄 **File preview**: Safe text-file preview in the web UI with path traversal protection, syntax-aware rendering, and download links
+- 🏷️ **Sidecar metadata**: Local `modely-info.json` persistence alongside cached assets for offline governance enrichment
 
 ## Installation
 
@@ -172,7 +176,7 @@ pip install modely-ai[server]
 modely-server --host 0.0.0.0 --port 8000
 ```
 
-**Phase 1 — Internal Mirror & Catalog:** `/api/v1/assets` (list/detail/files), `/api/v1/sync-jobs` (create/status/logs), `/api/v1/health`, `/api/v1/version`
+**Phase 1 — Internal Mirror & Catalog:** `/api/v1/assets` (list/detail/files/download-url/file-preview), `/api/v1/sync-jobs` (create/status/logs), `/api/v1/watch` (targets CRUD, drift check, history, discover/search), `/api/v1/health`, `/api/v1/version`
 
 **Phase 2 — Governance:** `/api/v1/governance/policy/evaluate`, `/api/v1/governance/requests` (submit/approve/reject/cancel), `/api/v1/admin/quotas`, `/api/v1/admin/credentials`, `/api/v1/admin/audit`
 
@@ -190,6 +194,15 @@ client = Client(base_url="http://localhost:8000", token="mod-xxx")
 # Catalog & search
 assets = client.assets.list(source="hf", page=1)
 asset = client.assets.get("hf:model:org--model")
+files = client.assets.files("hf:model:org--model")
+preview = client.assets.file_preview("hf:model:org--model", file_path="config.json")
+download = client.assets.download_url("hf:model:org--model")
+
+# Watch & discover
+targets = client.watch.list()
+client.watch.add(target={"source": "hf", "repo_type": "model", "repo_id": "org/model", "revision": "main"})
+drift = client.watch.drift()
+results = client.watch.discover(search="bert", source="hf", page=1, page_size=20)
 
 # Reproducibility
 client.lockfiles.validate("modely.lock", profile="production")
@@ -215,6 +228,10 @@ modely-ai asset search --server http://localhost:8000
 modely-ai recommend hf:model:org--model --server http://localhost:8000
 modely-ai alternatives hf:model:org--model --server http://localhost:8000
 
+# Watch & discover
+modely-ai watch discover --source hf --search bert --page-size 20
+modely-ai watch add hf://models/org/model --revision main
+
 # Reproducibility & snapshots
 modely-ai snapshot list --server http://localhost:8000
 modely-ai snapshot promote snap_xxx --channel production --server http://localhost:8000
@@ -236,7 +253,7 @@ cd src/modely/server/web
 npm install && npm run dev    # Vite dev server :5173 → proxy /api → :8000
 ```
 
-Pages: Asset List/Search, Asset Detail, Sync Jobs, Snapshots, CI Gate, Token Management, Enterprise Search, Analytics Dashboard.
+Pages: Asset List/Search, Asset Detail (with file tree, preview, download URLs, governance enrichment), Sync Jobs, Watch (Targets + Discover), Snapshots, CI Gate, Token Management, Enterprise Search, Analytics Dashboard.
 
 #### Enterprise Worker (modely-worker)
 
@@ -250,6 +267,16 @@ queue = InProcessTaskQueue()
 task_id = enqueue_sync_job(job, queue=queue, worker=worker)
 result = queue.get_result(task_id)
 ```
+
+#### Dev Mode (DevNullServices)
+
+For local development and demos, the server can run against your local modely cache without a production backend:
+
+```bash
+modely-server --dev
+```
+
+`DevNullServices` reads from `~/.cache/modely/` and `~/.modely/watch_state.json`, providing real data for the web UI. Sync jobs execute via `CompositeSourceAdapter` using real network adapters (HF, ModelScope, GitHub). File preview supports safe text-file rendering with path traversal protection. The catalog layer persists sidecar `modely-info.json` metadata alongside cached assets for offline governance enrichment.
 
 #### Multi-Tenant Isolation
 
@@ -276,6 +303,16 @@ svc.approve(req.id, reviewer="admin", reason="OK")
 svc.set_quota({"subject": "org1", "dimension": "downloads", "limit": 100, "mode": "hard"})
 svc.check_quota("org1", "downloads")  # {"allowed": True, ...}
 ```
+
+The governance engine provides:
+
+- **RBAC** (`modely.governance.rbac`): Permission-based access control with actions like `asset:read`, `asset:download`, `policy:manage`.
+- **Policy evaluation** (`modely.governance.policy`): Evaluate assets against configurable policy profiles with `block`, `require_approval`, `warn`, and `allow` decisions.
+- **Approval workflow** (`modely.governance.approvals`): Submit, approve, reject, cancel, escalate, and expire access requests with auto-approval rules and break-glass overrides.
+- **Audit** (`modely.governance.audit`): Record and query audit events for all governance actions.
+- **API tokens** (`modely.governance.api_tokens`): Token lifecycle management (create/rotate/revoke) for service accounts with scoped permissions.
+- **Redaction** (`modely.governance.redaction`): Sensitive field detection and redaction for audit-safe payloads.
+- **Download authorization** (`modely.storage.download_urls`): Multi-step authorization pipeline (RBAC → visibility → policy → audit) with signed download URL generation.
 
 ### Resource Sync Center
 
@@ -607,7 +644,7 @@ Search results are displayed as a table showing source, repository type (`model`
 
 
 
-#### Watch Hugging Face and ModelScope for Updates
+#### Watch Hugging Face, ModelScope, and GitHub for Updates
 
 Create a watch configuration:
 ```bash
@@ -634,6 +671,13 @@ The generated config starts with an empty `targets` list. Edit `~/.modely/watch.
       "revision": "master",
       "download": "files",
       "files": ["README.md", "data/train.jsonl"]
+    },
+    {
+      "source": "github",
+      "repo_type": "tool",
+      "repo_id": "owner/repo",
+      "revision": "main",
+      "download": "snapshot"
     }
   ]
 }
@@ -978,7 +1022,7 @@ Common options:
 ### Watch Commands
 
 ```bash
-modely-ai watch <init|run|list|drift|install|status|uninstall> [OPTIONS]
+modely-ai watch <init|run|list|drift|install|status|uninstall|discover> [OPTIONS]
 ```
 
 Options:
@@ -986,6 +1030,7 @@ Options:
 - `run --config FILE`: Check configured targets once and download changed repositories
 - `list --config FILE`: Show configured targets and their last known state
 - `drift --config FILE --json`: Check configured targets for remote drift without downloading or updating state
+- `discover --config FILE [--source hf|ms|github] [--repo-type model|dataset|tool] [--search QUERY] [--page N] [--page-size 10|20|30]` : Cross-platform search to discover repositories to watch (also available via the Watch UI Discover tab)
 - `install --config FILE --every {day,week} --time HH:MM --weekday mon`: Install a crontab job
 - `status --config FILE`: Show the installed crontab job
 - `uninstall --config FILE`: Remove the installed crontab job
