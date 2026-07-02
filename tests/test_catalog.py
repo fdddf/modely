@@ -1,6 +1,7 @@
 """Unit tests for local and cache catalog helpers."""
 
 import json
+from unittest.mock import patch
 
 from modely.catalog import (catalog_from_cache, catalog_from_directory, diff_catalogs, export_catalog,
                             list_catalog_snapshots, print_catalog_diff, print_catalog_report, scan_catalog,
@@ -219,3 +220,40 @@ def test_catalog_snapshots(tmp_path):
 
 def test_catalog_snapshots_empty_history(tmp_path):
     assert list_catalog_snapshots(str(tmp_path / "missing-history")) == []
+
+
+def test_asset_to_response_uses_governance_engine_for_risk_level():
+    """When item has no cached risk_level, _asset_to_response should use _evaluate_asset_policy."""
+
+    from modely.server.routes.catalog import _asset_to_response
+
+    item = {
+        "id": "ms:model:test/repo:main",
+        "source": "ms",
+        "repo_type": "model",
+        "repo_id": "test/repo",
+        "revision": "main",
+        "license": None,
+        "file_count": 15,
+        "tags": ["pytorch", "audio"],
+        "size": 1024,
+        "operational_state": "discovered",
+        "visibility": "organization",
+        "metadata": {},
+    }
+
+    # Simulate governance engine returning "high" for missing license
+    with patch("modely.server.routes.catalog._evaluate_asset_policy") as mock_eval:
+        mock_eval.return_value = ({}, "high", "needs_attention", ["missing_license"])
+        response = _asset_to_response(item)
+        mock_eval.assert_called_once()
+
+    assert response.to_dict()["metadata"]["risk_level"] == "high"
+
+    # When item already has a risk_level, governance engine should NOT be called
+    item_cached = {**item, "risk_level": "low"}
+    with patch("modely.server.routes.catalog._evaluate_asset_policy") as mock_eval:
+        response = _asset_to_response(item_cached)
+        mock_eval.assert_not_called()
+
+    assert response.to_dict()["metadata"]["risk_level"] == "low"

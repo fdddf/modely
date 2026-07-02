@@ -60,9 +60,12 @@ def list_assets(service, *, request_id: str = "req_unknown", principal=None, **q
         raw = [a for a in raw if _field(a, "id") == normalized_filter or _field(a, "id") == id_filter]
         if len(raw) == 1:
             asset = raw[0]
-            response = _asset_to_response(asset)
             asset_dict = asset.to_dict() if hasattr(asset, "to_dict") else dict(asset)
             scan_evidence, risk_level, policy_status, _ = _evaluate_asset_policy(asset_dict)
+            # Inject computed risk_level so _asset_to_response skips re-evaluation
+            if "risk_level" not in asset_dict:
+                asset_dict["risk_level"] = risk_level
+            response = _asset_to_response(asset_dict)
             governance = {
                 "visibility": response.visibility,
                 "access_rules": _build_access_rules_summary(asset_dict),
@@ -235,7 +238,9 @@ def _derive_risk_level(item) -> str:
         return "medium"
     if fc > 50:
         return "low"
-    return "unknown"
+    # No license + has content (files/tags) → treat as high risk, consistent with
+    # governance policy engine's _LICENSE_RISK mapping of "unknown" → "high"
+    return "high"
 
 
 def _default_policy_profile():
@@ -330,13 +335,16 @@ def get_asset(service, asset_id: str, *, request_id: str = "req_unknown", princi
 
     asset_dict = asset.to_dict() if hasattr(asset, "to_dict") else dict(asset)
 
-    response = _asset_to_response(asset_dict)
-
     # -- governance enrichment ----------------------------------------------------
     # Phase 2d: policy engine evaluation with real scan evidence
     scan_evidence, risk_level, policy_status, policy_reasons = _evaluate_asset_policy(
         asset_dict=asset_dict, principal=principal
     )
+
+    # Inject computed risk_level so _asset_to_response skips re-evaluation
+    if "risk_level" not in asset_dict:
+        asset_dict["risk_level"] = risk_level
+    response = _asset_to_response(asset_dict)
 
     governance: dict = {
         "visibility": response.visibility,
@@ -606,7 +614,11 @@ def _asset_to_response(item) -> AssetResponse:
     # License and tags may be top-level or nested inside metadata (cache enrichment)
     license_val = item.get("license") or meta.get("license")
     tags_val = list(item.get("tags") or meta.get("tags") or [])
-    risk_level = item.get("risk_level") or _derive_risk_level(item)
+    risk_level = item.get("risk_level")
+    if not risk_level:
+        # Use governance policy engine for consistent risk evaluation
+        # (same evaluation as _evaluate_asset_policy used in get_asset detail enrichment)
+        _, risk_level, _, _ = _evaluate_asset_policy(item)
     return AssetResponse(
         id=item.get("id", ""),
         source=source,
@@ -798,10 +810,7 @@ def _evaluate_asset_policy(
     )
 
     policy_status = decision.outcome
-    risk_level = decision.risk_level
-    # Fall back to simple heuristic when governance engine returns unknown
-    if risk_level == "unknown":
-        risk_level = _derive_risk_level(asset_dict)
+    risk_level = decision.risk_level or "high"
     reasons = decision.reasons
 
     return scan_evidence, risk_level, policy_status, reasons
