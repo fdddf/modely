@@ -435,18 +435,30 @@ class HubApi:
         """Get the list of files in a model repository."""
         if not revision:
             revision = DEFAULT_MODEL_REVISION
-        
+
         # Get the endpoint and cookies
         if not endpoint:
             endpoint = self.endpoint
         if use_cookies is None:
             use_cookies = self.get_cookies()
-        
+
         # Build the URL to get model files
         model_files_url = get_model_files_url(model_id, revision, endpoint)
-        
+
+        # Retry on transient failures (same strategy as file downloads)
+        session = requests.Session()
+        retry = Retry(
+            total=API_FILE_DOWNLOAD_RETRY_TIMES,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=['GET'],
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+
         try:
-            response = requests.get(
+            response = session.get(
                 model_files_url,
                 cookies=use_cookies,
                 timeout=API_FILE_DOWNLOAD_TIMEOUT
@@ -509,8 +521,20 @@ class HubApi:
         # Build the URL to get dataset files
         dataset_files_url = get_dataset_files_url(dataset_id, revision, endpoint)
 
+        # Retry on transient failures (same strategy as file downloads)
+        session = requests.Session()
+        retry = Retry(
+            total=API_FILE_DOWNLOAD_RETRY_TIMES,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=['GET'],
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+
         try:
-            response = requests.get(
+            response = session.get(
                 dataset_files_url,
                 cookies=use_cookies,
                 timeout=API_FILE_DOWNLOAD_TIMEOUT
