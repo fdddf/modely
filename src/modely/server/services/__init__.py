@@ -523,6 +523,15 @@ class DevNullServices:
         """
         results = self.list_assets()
 
+        # -- score enrichment (Phase 4 intelligence) ----------------------------
+        # Compute actual scores for all results using the local scoring engine so
+        # the Search page shows real 0-100 scores instead of all 0.00.
+        try:
+            from ...cataloging.catalog import _enrich_entries_local
+            _enrich_entries_local(results, include_scores=True, include_scan=False, warnings=[])
+        except Exception:
+            pass
+
         # -- free-text filter --------------------------------------------------
         if q and q != "*":
             results = [
@@ -538,13 +547,17 @@ class DevNullServices:
                 boost = 0.0
                 rid = (_field_val(a, "repo_id") or "").lower()
                 if needle == rid:
-                    boost = 1.0        # exact repo_id match
+                    boost = 5.0        # exact repo_id match
                 elif needle in rid:
-                    boost = 0.6         # partial repo_id match
+                    boost = 3.0         # partial repo_id match
                 elif any(needle in (t or "").lower() for t in (_field_val(a, "tags") or [])):
-                    boost = 0.4         # tag match
-                sc = _field_val(a, "score") or 0.0
-                _set_field(a, "score", max(sc, boost))
+                    boost = 2.0         # tag match
+                if boost > 0:
+                    sc = _field_val(a, "score")
+                    if isinstance(sc, dict):
+                        sc["score"] = min(100, sc.get("score", 0) + boost)
+                    else:
+                        _set_field(a, "score", max(sc or 0.0, boost))
 
         # -- faceted filters ---------------------------------------------------
         if src := (kwargs.get("source") or "").strip():
@@ -564,17 +577,25 @@ class DevNullServices:
                 results = [a for a in results if any(t in (_field_val(a, "tags") or []) for t in tags_filter)]
 
         # -- sort --------------------------------------------------------------
+        def _score_val(item) -> float:
+            sc = _field_val(item, "score")
+            if isinstance(sc, dict):
+                return float(sc.get("score", 0))
+            return float(sc or 0)
+
         sort_raw = (kwargs.get("sort") or "").strip()
         if sort_raw:
             descending = sort_raw.startswith("-")
             sort_key = sort_raw[1:] if descending else sort_raw
-            if sort_key in ("score", "size", "file_count"):
+            if sort_key == "score":
+                results = sorted(results, key=_score_val, reverse=descending)
+            elif sort_key in ("size", "file_count"):
                 results = sorted(results, key=lambda a: _field_val(a, sort_key) or 0, reverse=descending)
             else:
                 results = sorted(results, key=lambda a: _field_val(a, sort_key) or "", reverse=descending)
         elif q and q != "*":
             # Default: sort by relevance score when there's a query
-            results = sorted(results, key=lambda a: _field_val(a, "score") or 0.0, reverse=True)
+            results = sorted(results, key=_score_val, reverse=True)
 
         # -- pagination --------------------------------------------------------
         try:
@@ -625,7 +646,7 @@ class DevNullServices:
                 "revision": _field_val(a, "revision"),
                 "license": _field_val(a, "license"),
                 "tags": _field_val(a, "tags") or [],
-                "score": _field_val(a, "score") or 0.0,
+                "score": _score_val(a),
             }
             for a in paged
         ]
