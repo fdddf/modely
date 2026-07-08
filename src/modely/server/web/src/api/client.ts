@@ -45,13 +45,13 @@ import type {
 
 // Encode asset ID for URL use: replace / with -- (cache dir convention)
 // Colons are safe in URL path segments; only slashes cause routing issues.
-function _eid(id: string): string { return id.replace(/\//g, '--'); }
+export function encodeAssetId(id: string): string { return id.replace(/\//g, '--'); }
 
 export async function listAssets(params?: Record<string, string>) { return api.get<AssetListData>('/api/v1/assets', params); }
-export async function getAsset(id: string) { return api.get<AssetItem>('/api/v1/assets', { id: _eid(id) }); }
-export async function getAssetFiles(id: string) { return api.get<AssetFilesData>(`/api/v1/assets/${_eid(id)}/files`); }
-export async function getDownloadUrl(id: string) { return api.get<DownloadUrlData>(`/api/v1/assets/${_eid(id)}/download-url`); }
-export async function getFilePreview(assetId: string, filePath: string) { return api.get<FilePreviewData>(`/api/v1/assets/${_eid(assetId)}/files/preview`, { file_path: filePath }); }
+export async function getAsset(id: string) { return api.get<AssetItem>('/api/v1/assets', { id: encodeAssetId(id) }); }
+export async function getAssetFiles(id: string) { return api.get<AssetFilesData>(`/api/v1/assets/${encodeAssetId(id)}/files`); }
+export async function getDownloadUrl(id: string) { return api.get<DownloadUrlData>(`/api/v1/assets/${encodeAssetId(id)}/download-url`); }
+export async function getFilePreview(assetId: string, filePath: string) { return api.get<FilePreviewData>(`/api/v1/assets/${encodeAssetId(assetId)}/files/preview`, { file_path: filePath }); }
 
 export async function createSyncJob(payload: Record<string, unknown>) { return api.post<SyncJobData>('/api/v1/sync-jobs', payload); }
 export async function listSyncJobs() { return api.get<{ jobs: SyncJobData[]; total: number }>('/api/v1/sync-jobs'); }

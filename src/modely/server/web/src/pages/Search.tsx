@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
-import { search } from '../api/client'
+import { Link } from 'react-router-dom'
+import { search, encodeAssetId } from '../api/client'
 import type { SearchResultItem, SearchData } from '../api/types'
 
 // Helpers ---------------------------------------------------------------
@@ -132,7 +133,13 @@ export default function Search() {
                 <tbody>
                   {results.map(r => (
                     <tr key={r.asset_id} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{padding:10,fontSize:'0.84rem'}}>{r.repo_id || r.asset_id}</td>
+                      <td style={{padding:10,fontSize:'0.84rem'}}>
+                        <Link
+                          to={`/assets/${encodeAssetId(r.asset_id)}`}
+                        >
+                          {r.repo_id || r.asset_id}
+                        </Link>
+                      </td>
                       <td style={{padding:10,fontSize:'0.84rem'}}><code>{r.source}</code></td>
                       <td style={{padding:10,fontSize:'0.84rem'}}>{r.repo_type}</td>
                       <td style={{padding:10,fontSize:'0.84rem'}}>{r.license || '-'}</td>
