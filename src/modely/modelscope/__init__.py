@@ -500,10 +500,15 @@ class HubApi:
                     })
             
             return repo_files
+        except requests.HTTPError as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', 0) or 0
+            if status == 404:
+                print(f"Warning: Model not found: {model_id}")
+                return []
+            raise Exception(f"Failed to fetch model file list (HTTP {status}): {e}")
         except Exception as e:
             print(f"Warning: Could not fetch file list from API: {e}")
-            # Return an empty list if API call fails, as this is an optional feature for single file downloads
-            return []
+            raise
 
 
     def get_dataset_files(self, dataset_id: str, revision: str = None, recursive: bool = True,

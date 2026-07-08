@@ -142,7 +142,8 @@ function DiscoverTab({ watchedKeys, onAdded }: {
   }
 
   const handleAdd = async (r: RemoteSearchResult) => {
-    const revision = 'main'
+    // Use source-appropriate default: ModelScope defaults to 'master', HF/GitHub to 'main'
+    const revision = r.source === 'ms' ? 'master' : 'main'
     const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:${revision}`
     setAddingKey(key)
     try {
@@ -162,7 +163,8 @@ function DiscoverTab({ watchedKeys, onAdded }: {
   }
 
   const isAdded = (r: RemoteSearchResult) => {
-    const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:main`
+    const revision = r.source === 'ms' ? 'master' : 'main'
+    const key = `${r.source}:${r.repo_type}:${r.id || r.name || ''}:${revision}`
     return watchedKeys.has(key) || addedKeys.has(key)
   }
 

@@ -74,7 +74,8 @@ class LocalMirrorWorker:
         if not resource:
             raise ValueError("Sync job requires identity.resource")
         ref = parse_modely_uri(resource)
-        revision = job.identity.revision or self.adapter.resolve_revision(ref) or ref.revision or "fixture"
+        adapter_revision = self.adapter.resolve_revision(ref)
+        revision = job.identity.revision or adapter_revision or ref.revision or "fixture"
         ref.revision = revision
         include = job.metadata.get("include")
         exclude = job.metadata.get("exclude")
@@ -83,6 +84,19 @@ class LocalMirrorWorker:
             raw_files = self.adapter.list_files(ref)
         except Exception as exc:
             raise ValueError(f"Failed to list files for {resource} (revision: {revision}): {exc}") from exc
+        # When the requested revision returns no files but the adapter knows a
+        # different default revision, retry with the adapter default.  This
+        # handles cases where a caller passes a non-existent revision name
+        # (e.g. "main" for ModelScope repos whose default is "master").
+        if not raw_files and job.identity.revision and adapter_revision and job.identity.revision != adapter_revision:
+            ref.revision = adapter_revision
+            try:
+                raw_files = self.adapter.list_files(ref)
+            except Exception:
+                raw_files = []
+            if raw_files:
+                revision = adapter_revision
+                ref.revision = revision
         if not raw_files:
             raise ValueError(
                 f"No files found for {resource} (revision: {revision}). "
