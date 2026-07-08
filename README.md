@@ -22,12 +22,12 @@ Single platforms can help users find and download resources hosted in that platf
 
 ### Source Support Matrix
 
-| Source | Search | Download | Files | Info | Compare | Score | Scan | Lock | Cache | Notes |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| Hugging Face | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Official SDK |
-| ModelScope | ✅ | ✅ | ✅/partial | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Optional official SDK |
-| GitHub | ✅ | ✅ | ✅ | ✅ | ✅ | Partial | ✅ | ✅ | ✅ | Always treated as `tool` |
-| Kaggle | Partial | Partial | Partial | Partial | Partial | Partial | Partial | Partial | Partial | Requires Kaggle environment |
+| Source | Search | Download | Files | Info | Compare | Score | Scan | Lock | Cache | Default Revision | Notes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---:|---|
+| Hugging Face | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `main` | Official SDK |
+| ModelScope | ✅ | ✅ | ✅/partial | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `master` | Optional official SDK |
+| GitHub | ✅ | ✅ | ✅ | ✅ | ✅ | Partial | ✅ | ✅ | ✅ | `main` | Always treated as `tool` |
+| Kaggle | Partial | Partial | Partial | Partial | Partial | Partial | Partial | Partial | Partial | — | Requires Kaggle environment |
 
 ### Boundaries with Native Tools
 
@@ -230,7 +230,8 @@ modely-ai alternatives hf:model:org--model --server http://localhost:8000
 
 # Watch & discover
 modely-ai watch discover --source hf --search bert --page-size 20
-modely-ai watch add hf://models/org/model --revision main
+modely-ai watch add hf://models/org/model --revision main    # HF default branch
+modely-ai watch add ms://models/org/model --revision master  # ModelScope default branch
 
 # Reproducibility & snapshots
 modely-ai snapshot list --server http://localhost:8000
@@ -419,7 +420,7 @@ modely-ai ms owner/dataset-name --repo-type dataset
 
 Download with specific options:
 ```bash
-modely-ai ms owner/model-name --revision main --local-dir ./models
+modely-ai ms owner/model-name --revision master --local-dir ./models
 ```
 
 Use the optional official ModelScope SDK backend:
@@ -704,6 +705,8 @@ modely-ai watch uninstall
 ```
 
 Watch state is stored in `~/.modely/watch_state.json` by default. Cron output is appended to `~/.modely/watch.log` for the default config, or to `watch.log` next to a custom config file. For private repositories, set `token_env` in the target and put the token in that environment variable instead of writing secrets into the config file. For large models or datasets, prefer `allow_patterns`, `ignore_patterns`, or `download: "files"` so the watcher does not mirror unnecessary large files.
+
+Each source has its own default revision convention: Hugging Face uses `main`, ModelScope uses `master`, and GitHub uses `main`. When adding watch targets, use the revision appropriate for the source — using the wrong revision (e.g., `main` for ModelScope) will cause file listing to return empty results.
 
 ModelScope dataset file listing may not be available for every repository through the lightweight API. When a ModelScope target uses `download: "files"` with explicit `files`, modely refreshes those files on each scheduled run if remote listing is unavailable. Snapshot downloads and pattern-based ModelScope filtering still require a remote file list.
 
