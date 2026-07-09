@@ -369,10 +369,14 @@ class DevNullServices:
 
     # -- CI gate -----------------------------------------------------------------
 
-    def evaluate_ci_gate(self, lockfile_path: str, profile: str = "production") -> Any:
-        return _empty_stub(
-            status="passed", exit_code=0, profile=profile, lockfile_path=lockfile_path,
-            resources=[], summary={"total": 0, "passed": 0, "failed": 0, "warning": 0},
+    def evaluate_ci_gate(self, lockfile_path: str, profile: str = "production",
+                         fail_on_warnings: bool = False, policy_path: str | None = None) -> Any:
+        from ...reproducibility.ci_gate import evaluate_ci_gate as _evaluate
+        return _evaluate(
+            lockfile_path=lockfile_path,
+            profile=profile,
+            fail_on_warnings=fail_on_warnings,
+            policy_path=policy_path,
         )
 
     # -- Lockfile / manifest reproducibility -------------------------------------
@@ -386,9 +390,13 @@ class DevNullServices:
     # -- Sync jobs ---------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        """Initialise in-memory job and snapshot stores."""
+        """Initialise in-memory job, snapshot, service account, and token stores."""
         object.__setattr__(self, "_jobs", {})
         object.__setattr__(self, "_snapshots", {})
+        from ...governance.service_accounts import InMemoryServiceAccountRepository
+        from ...governance.api_tokens import InMemoryTokenRepository
+        object.__setattr__(self, "_sa_repo", InMemoryServiceAccountRepository())
+        object.__setattr__(self, "_token_repo", InMemoryTokenRepository())
 
     def create_sync_job(self, **kwargs: Any) -> Any:
         from datetime import datetime, timezone

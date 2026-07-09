@@ -74,6 +74,8 @@ export async function createToken(saId: string, scopes: string[]) { return api.p
 export async function search(query: string, filters?: Record<string, string>) { return api.get<SearchData>('/api/v1/search', { q: query, ...filters }); }
 export async function getRiskTrends() { return api.get<RiskTrendsData>('/api/v1/analytics/risk'); }
 export async function getUsagePopularity() { return api.get<UsageStatsData>('/api/v1/analytics/usage'); }
+export async function getLifecycleAnalytics(threshold_days?: number) { return api.get<{ stale_assets: Array<{ asset_id: string }>; count: number }>('/api/v1/analytics/lifecycle', threshold_days ? { threshold_days: String(threshold_days) } : undefined); }
+export async function getCostAnalytics() { return api.get<{ recommendations: Array<Record<string, unknown>>; total: number }>('/api/v1/analytics/cost'); }
 
 // -- Watch --
 export async function getWatchTargets(config?: string) { return api.get<WatchTargetListData>('/api/v1/watch/targets', config ? { config } : undefined); }
