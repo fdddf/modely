@@ -1,3 +1,5 @@
+
+
 # modely-ai
 
 **modely-ai** is a Python package that provides a unified interface for downloading AI models and datasets from multiple platforms including Hugging Face and ModelScope. It offers a simple command-line tool and Python API to efficiently download models and datasets with progress tracking, resumable downloads, and minimal dependencies.
@@ -74,7 +76,7 @@ modely ms owner/model-name --revision main --local-dir ./models
 You can also use modely-ai directly in your Python code:
 
 ```python
-from modely import hf_snapshot_download, model_file_download
+from modely import hf_snapshot_download, model_file_download, hf_file_download, modelscope_snapshot_download
 
 # Download an entire Hugging Face repository
 model_path = hf_snapshot_download(
