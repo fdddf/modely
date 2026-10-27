@@ -1,0 +1,9 @@
+{
+  "fail_on": "high",
+  "allow_licenses": ["mit", "apache-2.0", "bsd-3-clause"],
+  "deny_licenses": ["cc-by-nc", "agpl-3.0"],
+  "deny_sources": [],
+  "deny_finding_ids": ["pickle-artifact", "pickle-opcode", "dynamic-exec"],
+  "require_checksums": true,
+  "min_score": 70
+}

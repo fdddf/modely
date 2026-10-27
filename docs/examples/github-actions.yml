@@ -1,0 +1,22 @@
+name: modely-governance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  modely-governance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e .
+      - name: Validate lockfile
+        run: modely-ai validate-lock -f modely.lock --strict --json
+      - name: Gate local catalog
+        run: |
+          modely-ai catalog scan ./models --score --scan --output catalog.json --json
+          modely-ai catalog gate catalog.json --policy docs/examples/policy.json --json

@@ -7,12 +7,12 @@ dependencies. It can download a specific file or an entire model repository.
 """
 
 import argparse
+import fnmatch
 import hashlib
 import io
 import json
 import os
 import shutil
-import sys
 import tempfile
 import urllib
 import uuid
@@ -21,6 +21,8 @@ from functools import partial
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+from modely.common import cache as ms_cache
+from modely.types import FileInfo, RepoInfo
 import requests
 from requests.adapters import Retry
 from tqdm.auto import tqdm
@@ -55,27 +57,33 @@ def model_id_to_group_owner_name(model_id: str) -> tuple:
     return model_id.split('/')
 
 
-def get_model_cache_root():
+def get_model_cache_root(cache_dir: Optional[str] = None):
     """Get the default model cache directory."""
-    cache_root = os.environ.get('MODELSCOPE_CACHE', os.path.join(Path.home(), '.cache', 'modelscope'))
-    hub_cache = os.path.join(cache_root, 'hub')
-    os.makedirs(hub_cache, exist_ok=True)
-    return hub_cache
+    base = ms_cache.get_source_cache_dir("ms", cache_dir)
+    model_cache = os.path.join(base, "models")
+    os.makedirs(model_cache, exist_ok=True)
+    return model_cache
 
 
-def get_dataset_cache_root():
+def get_dataset_cache_root(cache_dir: Optional[str] = None):
     """Get the default dataset cache directory."""
-    cache_root = os.environ.get('MODELSCOPE_CACHE', os.path.join(Path.home(), '.cache', 'modelscope'))
-    dataset_cache = os.path.join(cache_root, 'datasets')
+    base = ms_cache.get_source_cache_dir("ms", cache_dir)
+    dataset_cache = os.path.join(base, "datasets")
     os.makedirs(dataset_cache, exist_ok=True)
     return dataset_cache
 
 
-def get_file_download_url(model_id: str, file_path: str, revision: str, endpoint: Optional[str] = None):
+def get_file_download_url(model_id: str, file_path: str, revision: str, repo_type: str = REPO_TYPE_MODEL, endpoint: Optional[str] = None):
     """Format file download url according to `model_id`, `revision` and `file_path`."""
+    # Preserve '/' in model_id for URL path; encode '/' in file_path for query string
+    model_id = urllib.parse.quote(model_id, safe='/')
     file_path = urllib.parse.quote_plus(file_path)
     revision = urllib.parse.quote_plus(revision)
-    download_url_template = '{endpoint}/api/v1/models/{model_id}/repo?Revision={revision}&FilePath={file_path}'
+    # Use the correct API endpoint based on repo_type
+    if repo_type == REPO_TYPE_DATASET:
+        download_url_template = '{endpoint}/api/v1/datasets/{model_id}/repo?Revision={revision}&FilePath={file_path}'
+    else:
+        download_url_template = '{endpoint}/api/v1/models/{model_id}/repo?Revision={revision}&FilePath={file_path}'
     if not endpoint:
         endpoint = get_endpoint()
     return download_url_template.format(
@@ -88,13 +96,28 @@ def get_file_download_url(model_id: str, file_path: str, revision: str, endpoint
 
 def get_model_files_url(model_id: str, revision: str, endpoint: Optional[str] = None):
     """Get the URL to list model files."""
-    model_id_encoded = urllib.parse.quote_plus(model_id)
-    revision = urllib.parse.quote_plus(revision) if revision else 'master'
-    
+    # Use quote with '/' as safe char to preserve path separator
+    model_id_encoded = urllib.parse.quote(model_id, safe='/')
+    revision = urllib.parse.quote(revision, safe='') if revision else 'master'
+
     if not endpoint:
         endpoint = get_endpoint()
-    
+
     return f"{endpoint}/api/v1/models/{model_id_encoded}/repo/files?Revision={revision}"
+
+
+def get_dataset_files_url(dataset_id: str, revision: str, endpoint: Optional[str] = None):
+    """Get the URL to list dataset files.
+
+    ModelScope uses ``/repo/tree`` for datasets (``/repo/files`` is for models).
+    """
+    dataset_id_encoded = urllib.parse.quote(dataset_id, safe='/')
+    revision = urllib.parse.quote(revision, safe='') if revision else 'master'
+
+    if not endpoint:
+        endpoint = get_endpoint()
+
+    return f"{endpoint}/api/v1/datasets/{dataset_id_encoded}/repo/tree?Revision={revision}"
 
 
 def file_integrity_validation(file_path: str, expected_hash: str):
@@ -402,28 +425,40 @@ class HubApi:
         """Get endpoint for reading repository."""
         return self.endpoint
     
-    def get_valid_revision(self, repo_id: str, revision: str = None, cookies=None, endpoint=None):
+    def get_valid_revision(self, repo_id: str, revision: str = None, cookies=None, endpoint=None, repo_type: str = REPO_TYPE_MODEL):
         """Get the valid revision of a repository."""
         if not revision:
-            revision = DEFAULT_MODEL_REVISION
+            revision = DEFAULT_DATASET_REVISION if repo_type == REPO_TYPE_DATASET else DEFAULT_MODEL_REVISION
         return revision
     
     def get_model_files(self, model_id: str, revision: str = None, recursive: bool = True, use_cookies=None, endpoint=None):
         """Get the list of files in a model repository."""
         if not revision:
             revision = DEFAULT_MODEL_REVISION
-        
+
         # Get the endpoint and cookies
         if not endpoint:
             endpoint = self.endpoint
         if use_cookies is None:
             use_cookies = self.get_cookies()
-        
+
         # Build the URL to get model files
         model_files_url = get_model_files_url(model_id, revision, endpoint)
-        
+
+        # Retry on transient failures (same strategy as file downloads)
+        session = requests.Session()
+        retry = Retry(
+            total=API_FILE_DOWNLOAD_RETRY_TIMES,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=['GET'],
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+
         try:
-            response = requests.get(
+            response = session.get(
                 model_files_url,
                 cookies=use_cookies,
                 timeout=API_FILE_DOWNLOAD_TIMEOUT
@@ -434,7 +469,15 @@ class HubApi:
             data = response.json()
             
             # Extract files from the response - adjust based on actual API response format
-            files = data.get('Data', {}).get('Files', []) if isinstance(data, dict) else []
+            if isinstance(data, dict):
+                data_section = data.get('Data')
+                files = data_section.get('Files') if isinstance(data_section, dict) else None
+            else:
+                files = None
+            # .get('Files') may return None even when the key exists;
+            # ensure we always have a list.
+            if not isinstance(files, list):
+                files = []
             
             # Format files to match expected structure
             repo_files = []
@@ -457,13 +500,91 @@ class HubApi:
                     })
             
             return repo_files
+        except requests.HTTPError as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', 0) or 0
+            if status == 404:
+                print(f"Warning: Model not found: {model_id}")
+                return []
+            raise Exception(f"Failed to fetch model file list (HTTP {status}): {e}")
         except Exception as e:
             print(f"Warning: Could not fetch file list from API: {e}")
-            # Return an empty list if API call fails, as this is an optional feature for single file downloads
-            return []
+            raise
 
 
-def model_file_download(
+    def get_dataset_files(self, dataset_id: str, revision: str = None, recursive: bool = True,
+                          use_cookies=None, endpoint=None):
+        """Get the list of files in a dataset repository."""
+        if not revision:
+            revision = DEFAULT_DATASET_REVISION
+
+        # Get the endpoint and cookies
+        if not endpoint:
+            endpoint = self.endpoint
+        if use_cookies is None:
+            use_cookies = self.get_cookies()
+
+        # Build the URL to get dataset files
+        dataset_files_url = get_dataset_files_url(dataset_id, revision, endpoint)
+
+        # Retry on transient failures (same strategy as file downloads)
+        session = requests.Session()
+        retry = Retry(
+            total=API_FILE_DOWNLOAD_RETRY_TIMES,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=['GET'],
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+
+        try:
+            response = session.get(
+                dataset_files_url,
+                cookies=use_cookies,
+                timeout=API_FILE_DOWNLOAD_TIMEOUT
+            )
+            response.raise_for_status()
+
+            # Parse the response
+            data = response.json()
+
+            # Extract files from the response
+            data_dict = data.get('Data') if isinstance(data, dict) else None
+            files = data_dict.get('Files') if isinstance(data_dict, dict) else None
+            if not isinstance(files, list):
+                files = []
+
+            # Format files to match expected structure
+            repo_files = []
+            for file_info in files:
+                if isinstance(file_info, str):
+                    repo_files.append({
+                        'Path': file_info,
+                        'Name': os.path.basename(file_info),
+                        'Type': 'blob',
+                        'Size': 0
+                    })
+                elif isinstance(file_info, dict):
+                    repo_files.append({
+                        'Path': file_info.get('Path', file_info.get('path', file_info.get('name', file_info.get('Name')))),
+                        'Name': file_info.get('Name', os.path.basename(file_info.get('Path', ''))),
+                        'Type': file_info.get('Type', 'blob'),
+                        'Size': file_info.get('Size', file_info.get('size', 0))
+                    })
+
+            return repo_files
+        except requests.HTTPError as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', 0) or 0
+            if status == 404:
+                print(f"Warning: Dataset not found: {dataset_id}")
+                return []
+            raise Exception(f"Failed to fetch dataset file list (HTTP {status}): {e}")
+        except Exception as e:
+            print(f"Warning: Could not fetch dataset file list from API: {e}")
+            raise
+
+def _lightweight_model_file_download(
     model_id: str,
     file_path: str,
     revision: Optional[str] = DEFAULT_MODEL_REVISION,
@@ -473,7 +594,7 @@ def model_file_download(
     local_dir: Optional[str] = None,
     token: Optional[str] = None,
 ) -> Optional[str]:
-    """Download a specific file from a model repository."""
+    """Download a specific file from a model repository using the lightweight backend."""
     return _repo_file_download(
         model_id,
         file_path,
@@ -486,7 +607,7 @@ def model_file_download(
         token=token)
 
 
-def dataset_file_download(
+def _lightweight_dataset_file_download(
     dataset_id: str,
     file_path: str,
     revision: Optional[str] = DEFAULT_DATASET_REVISION,
@@ -496,7 +617,7 @@ def dataset_file_download(
     cookies: Optional[CookieJar] = None,
     token: Optional[str] = None,
 ) -> str:
-    """Download a specific file from a dataset repository."""
+    """Download a specific file from a dataset repository using the lightweight backend."""
     return _repo_file_download(
         dataset_id,
         file_path,
@@ -507,6 +628,120 @@ def dataset_file_download(
         cookies=cookies,
         local_dir=local_dir,
         token=token)
+
+
+def _normalize_backend(backend: str) -> str:
+    if backend not in {"auto", "official", "lightweight"}:
+        raise ValueError("backend must be one of: auto, official, lightweight")
+    return backend
+
+
+def _should_use_official_backend(backend: str) -> bool:
+    """Decide whether to use the optional official ModelScope SDK backend."""
+    backend = _normalize_backend(backend)
+    if backend == "lightweight":
+        return False
+
+    from . import official_adapter
+
+    available = official_adapter.is_available()
+    if backend == "official" and not available:
+        raise ImportError(
+            "Official ModelScope SDK is not installed. "
+            "Install it with: pip install 'modely-ai[modelscope]'"
+        )
+    return available
+
+
+def _official_local_dir(repo_id: str, repo_type: str, revision: Optional[str], cache_dir, local_dir: Optional[str]) -> Optional[str]:
+    """Return the local directory for official SDK downloads."""
+    if local_dir:
+        return local_dir
+    default_revision = DEFAULT_DATASET_REVISION if repo_type == REPO_TYPE_DATASET else DEFAULT_MODEL_REVISION
+    base = ms_cache.get_cache_dir(cache_dir)
+    repo_dir = repo_id.replace("/", "--")
+    type_dir = "datasets" if repo_type == REPO_TYPE_DATASET else "models" if repo_type == REPO_TYPE_MODEL else repo_type
+    return os.path.join(base, "ms", type_dir, repo_dir, revision or default_revision)
+
+
+def model_file_download(
+    model_id: str,
+    file_path: str,
+    revision: Optional[str] = DEFAULT_MODEL_REVISION,
+    cache_dir: Optional[str] = None,
+    local_files_only: Optional[bool] = False,
+    cookies: Optional[CookieJar] = None,
+    local_dir: Optional[str] = None,
+    token: Optional[str] = None,
+    backend: str = "auto",
+) -> Optional[str]:
+    """Download a specific model file using official SDK or lightweight backend."""
+    if _should_use_official_backend(backend):
+        from . import official_adapter
+        try:
+            return official_adapter.model_file_download(
+                model_id=model_id,
+                file_path=file_path,
+                revision=revision,
+                cache_dir=cache_dir,
+                local_dir=_official_local_dir(model_id, REPO_TYPE_MODEL, revision, cache_dir, local_dir),
+                token=token,
+            )
+        except Exception as exc:
+            if backend == "official":
+                raise
+            print(f"Warning: Official ModelScope SDK failed, falling back to lightweight backend: {exc}")
+
+    return _lightweight_model_file_download(
+        model_id=model_id,
+        file_path=file_path,
+        revision=revision,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+        cookies=cookies,
+        local_dir=local_dir,
+        token=token,
+    )
+
+
+def dataset_file_download(
+    dataset_id: str,
+    file_path: str,
+    revision: Optional[str] = DEFAULT_DATASET_REVISION,
+    cache_dir: Union[str, Path, None] = None,
+    local_dir: Optional[str] = None,
+    local_files_only: Optional[bool] = False,
+    cookies: Optional[CookieJar] = None,
+    token: Optional[str] = None,
+    backend: str = "auto",
+) -> str:
+    """Download a dataset file using official SDK or lightweight backend."""
+    if _should_use_official_backend(backend):
+        from . import official_adapter
+        try:
+            return official_adapter.dataset_file_download(
+                dataset_id=dataset_id,
+                file_path=file_path,
+                revision=revision,
+                cache_dir=cache_dir,
+                local_dir=_official_local_dir(dataset_id, REPO_TYPE_DATASET, revision, cache_dir, local_dir),
+                token=token,
+            )
+        except Exception as exc:
+            if backend == "official":
+                raise
+            print(f"Warning: Official ModelScope SDK failed, falling back to lightweight backend: {exc}")
+
+    return _lightweight_dataset_file_download(
+        dataset_id=dataset_id,
+        file_path=file_path,
+        revision=revision,
+        cache_dir=cache_dir,
+        local_dir=local_dir,
+        local_files_only=local_files_only,
+        cookies=cookies,
+        token=token,
+    )
 
 
 def _repo_file_download(
@@ -526,8 +761,8 @@ def _repo_file_download(
     if repo_type not in REPO_TYPE_SUPPORT:
         raise ValueError(f'Invalid repo type: {repo_type}, only support: {REPO_TYPE_SUPPORT}')
 
-    # Create temporary cache directory and cache object - only use local_dir or current directory
-    temporary_cache_dir, cache = create_temporary_directory_and_cache(repo_id, local_dir=local_dir, cache_dir=None, repo_type=repo_type)
+    # Create temporary cache directory and cache object
+    temporary_cache_dir, cache = create_temporary_directory_and_cache(repo_id, local_dir=local_dir, cache_dir=cache_dir, repo_type=repo_type)
 
     # For this simplified version, we don't check local_files_only since we don't maintain full cache
     if local_files_only:
@@ -560,7 +795,7 @@ def _repo_file_download(
     endpoint = _api.get_endpoint_for_read(repo_id=repo_id, repo_type=repo_type)
     file_to_download_meta = None
     if repo_type == REPO_TYPE_MODEL:
-        revision = _api.get_valid_revision(repo_id, revision=revision, cookies=cookies, endpoint=endpoint)
+        revision = _api.get_valid_revision(repo_id, revision=revision, cookies=cookies, endpoint=endpoint, repo_type=repo_type)
         # we need to confirm the version is up-to-date
         # we need to get the file list to check if the latest version is cached, if so return, otherwise download
         repo_files = _api.get_model_files(
@@ -578,36 +813,42 @@ def _repo_file_download(
                 file_to_download_meta = repo_file
                 break
     elif repo_type == REPO_TYPE_DATASET:
-        print("Dataset download is not fully implemented in this standalone version.")
-        return temporary_cache_dir
+        revision = _api.get_valid_revision(repo_id, revision=revision, cookies=cookies, endpoint=endpoint, repo_type=repo_type)
+        # For datasets, skip file listing (API may not support it)
+        # Build file metadata directly and try to download
+        file_to_download_meta = {
+            'Path': file_path,
+            'Name': os.path.basename(file_path),
+            'Type': 'blob',
+            'Size': 0
+        }
 
     if file_to_download_meta is None:
         raise Exception(f'The file path: {file_path} not exist in: {repo_id}')
 
     # we need to download again
-    if repo_type == REPO_TYPE_MODEL:
-        url_to_download = get_file_download_url(repo_id, file_path, revision, endpoint)
-    else:
-        raise ValueError(f'Invalid repo type {repo_type}')
+    url_to_download = get_file_download_url(repo_id, file_path, revision, repo_type=repo_type, endpoint=endpoint)
 
     return download_file(url_to_download, file_to_download_meta, temporary_cache_dir, cache, headers, cookies, disable_tqdm=disable_tqdm)
 
 
 class BasicCache:
     """Basic cache implementation to mimic ModelFileSystemCache."""
-    
+
     def __init__(self, cache_dir: str, group_or_owner: str = None, name: str = None):
         self.cache_dir = cache_dir
         self.group_or_owner = group_or_owner
         self.name = name
         self.root_location_path = os.path.join(cache_dir, group_or_owner, name) if group_or_owner and name else cache_dir
         os.makedirs(self.root_location_path, exist_ok=True)
-    
+
     def exists(self, file_info: Dict):
         """Check if the file already exists in cache with the same hash."""
-        # For simplicity, we'll always return False to force download
-        # In a full implementation, this would check file hashes
-        return False
+        file_path = file_info.get('Path')
+        if not file_path:
+            return False
+        full_path = os.path.join(self.root_location_path, file_path)
+        return os.path.exists(full_path) and os.path.getsize(full_path) > 0
     
     def get_file_by_path(self, file_path: str):
         """Get file path if it exists in cache."""
@@ -644,15 +885,25 @@ def create_temporary_directory_and_cache(model_id: str,
                                          cache_dir: str = None,
                                          repo_type: str = REPO_TYPE_MODEL):
     """Create temporary directory and cache object."""
-    # Only use local_dir if specified, otherwise use current directory
     if local_dir is not None:
+        # Use specified local directory
         temporary_cache_dir = os.path.join(local_dir, TEMPORARY_FOLDER_NAME)
         cache = BasicCache(local_dir)
     else:
-        # Use current directory as default
-        current_dir = os.getcwd()
-        temporary_cache_dir = os.path.join(current_dir, TEMPORARY_FOLDER_NAME)
-        cache = BasicCache(current_dir)
+        # Use unified cache system
+        # Parse model_id to get owner/name
+        parts = model_id.split('/')
+        if len(parts) == 2:
+            owner, name = parts
+        else:
+            owner, name = "unknown", model_id
+
+        # Get cache directory from unified system
+        base_cache = ms_cache.get_repo_cache_dir(
+            model_id, repo_type, "master", "ms", cache_dir
+        )
+        cache = BasicCache(base_cache)
+        temporary_cache_dir = os.path.join(base_cache, TEMPORARY_FOLDER_NAME)
 
     os.makedirs(temporary_cache_dir, exist_ok=True)
     return temporary_cache_dir, cache
@@ -672,7 +923,15 @@ def create_temporary_directory(repo_id: str, local_dir: str = None, cache_dir: s
     return temporary_cache_dir
 
 
-def snapshot_download(
+def _empty_snapshot_message(repo_id: str, repo_type: str, revision: str, endpoint: str) -> str:
+    hint = "ModelScope repository IDs usually use the owner/name form; verify the namespace and revision."
+    if repo_type == REPO_TYPE_DATASET:
+        hint = "Dataset snapshot listing may be unavailable; verify the dataset owner/name or use --file for a known file."
+    return (f"No files found for ModelScope {repo_type} '{repo_id}' at revision '{revision}' "
+            f"from {endpoint}. {hint}")
+
+
+def _lightweight_snapshot_download(
     repo_id: str,
     repo_type: str = REPO_TYPE_MODEL,
     revision: Optional[str] = None,
@@ -681,20 +940,33 @@ def snapshot_download(
     cookies: Optional[CookieJar] = None,
     local_dir: Optional[str] = None,
     token: Optional[str] = None,
+    force_download: bool = False,
+    allow_patterns: Optional[List[str]] = None,
+    ignore_patterns: Optional[List[str]] = None,
 ) -> str:
-    """Download all files from a repository."""
+    """Download all files from a repository using the lightweight backend.
+
+    Args:
+        allow_patterns: Glob patterns to include (e.g., ["*.json"]). If set, only matching files are downloaded.
+        ignore_patterns: Glob patterns to exclude (e.g., ["*.safetensors"]).
+    """
     if repo_type not in REPO_TYPE_SUPPORT:
         raise ValueError(f'Invalid repo type: {repo_type}, only support: {REPO_TYPE_SUPPORT}')
 
     if revision is None:
         revision = DEFAULT_DATASET_REVISION if repo_type == REPO_TYPE_DATASET else DEFAULT_MODEL_REVISION
 
-    temporary_cache_dir = create_temporary_directory(repo_id, local_dir=local_dir, cache_dir=cache_dir, repo_type=repo_type)
-    
+    # Check if repo is already cached
+    if not force_download:
+        cached_path = ms_cache.get_cached_repo_path(repo_id, repo_type, revision, "ms", cache_dir)
+        if cached_path:
+            print(f"Repository already cached at: {cached_path}")
+            return cached_path
+
     if local_files_only:
         # In a full implementation, we would check if the files already exist in cache
         print("Local files only mode is not fully implemented in this standalone version")
-        return temporary_cache_dir
+        return local_dir if local_dir else ms_cache.get_repo_cache_dir(repo_id, repo_type, revision, "ms", cache_dir)
 
     _api = HubApi(token=token)
     endpoint = _api.get_endpoint_for_read(repo_id, repo_type)
@@ -707,7 +979,7 @@ def snapshot_download(
         else:
             cookies = {}
     
-    revision = _api.get_valid_revision(repo_id, revision=revision, cookies=cookies, endpoint=endpoint)
+    revision = _api.get_valid_revision(repo_id, revision=revision, cookies=cookies, endpoint=endpoint, repo_type=repo_type)
     
     # Get the list of files to download
     if repo_type == REPO_TYPE_MODEL:
@@ -719,43 +991,303 @@ def snapshot_download(
             endpoint=endpoint
         )
     else:
-        print("Dataset snapshot download is not fully implemented in this standalone version. "
-              "Use dataset_file_download for individual file downloads.")
-        return temporary_cache_dir
+        repo_files = _api.get_dataset_files(
+            dataset_id=repo_id,
+            revision=revision,
+            recursive=True,
+            use_cookies=cookies,
+            endpoint=endpoint
+        )
+        if not repo_files:
+            raise FileNotFoundError(_empty_snapshot_message(repo_id, repo_type, revision, endpoint))
+
+    if not repo_files:
+        raise FileNotFoundError(_empty_snapshot_message(repo_id, repo_type, revision, endpoint))
 
     # Process each file and download
-    for repo_file in repo_files:
-        if repo_file.get('Type') == 'tree':
-            continue  # Skip directories
+    download_files = [f for f in repo_files if f.get('Type') != 'tree']
 
-        file_path = repo_file['Path']
-        print(f"Downloading: {file_path}")
+    # Apply file filtering
+    if allow_patterns:
+        download_files = [
+            f for f in download_files
+            if any(fnmatch.fnmatch(f['Path'], pat) for pat in allow_patterns)
+        ]
+    if ignore_patterns:
+        download_files = [
+            f for f in download_files
+            if not any(fnmatch.fnmatch(f['Path'], pat) for pat in ignore_patterns)
+        ]
 
-        try:
-            # Download this specific file
-            _repo_file_download(
-                repo_id=repo_id,
-                file_path=file_path,
-                repo_type=repo_type,
-                revision=revision,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                cookies=cookies,
-                local_dir=local_dir,
-                disable_tqdm=False,
-                token=token
-            )
-        except Exception as e:
-            print(f"Failed to download {file_path}: {e}")
-            continue  # Continue with other files
+    with tqdm(total=len(download_files), unit="file", desc="Downloading snapshot") as pbar:
+        for repo_file in download_files:
+            file_path = repo_file['Path']
+            pbar.set_postfix_str(file_path)
+
+            try:
+                # Download this specific file
+                _repo_file_download(
+                    repo_id=repo_id,
+                    file_path=file_path,
+                    repo_type=repo_type,
+                    revision=revision,
+                    cache_dir=cache_dir,
+                    local_files_only=local_files_only,
+                    cookies=cookies,
+                    local_dir=local_dir,
+                    disable_tqdm=False,
+                    token=token
+                )
+            except Exception as e:
+                print(f"Failed to download {file_path}: {e}")
+            pbar.update(1)
 
     print("Snapshot download completed!")
-    
+
     # Return the cache directory path
     if local_dir:
         return os.path.abspath(local_dir)
     else:
-        return temporary_cache_dir
+        return ms_cache.get_repo_cache_dir(repo_id, repo_type, revision, "ms", cache_dir)
+
+def snapshot_download(
+    repo_id: str,
+    repo_type: str = REPO_TYPE_MODEL,
+    revision: Optional[str] = None,
+    cache_dir: Union[str, Path, None] = None,
+    local_files_only: Optional[bool] = False,
+    cookies: Optional[CookieJar] = None,
+    local_dir: Optional[str] = None,
+    token: Optional[str] = None,
+    force_download: bool = False,
+    allow_patterns: Optional[List[str]] = None,
+    ignore_patterns: Optional[List[str]] = None,
+    backend: str = "auto",
+) -> str:
+    """Download all files from a repository using official SDK or lightweight backend."""
+    official_failed = False
+    if _should_use_official_backend(backend):
+        from . import official_adapter
+        try:
+            return official_adapter.snapshot_download(
+                repo_id=repo_id,
+                repo_type=repo_type,
+                revision=revision,
+                cache_dir=cache_dir,
+                local_dir=_official_local_dir(repo_id, repo_type, revision, cache_dir, local_dir),
+                token=token,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+            )
+        except Exception as exc:
+            if backend == "official":
+                raise
+            official_failed = True
+            print(f"Warning: Official ModelScope SDK failed, falling back to lightweight backend: {exc}")
+
+    return _lightweight_snapshot_download(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        revision=revision,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+        cookies=cookies,
+        local_dir=local_dir,
+        token=token,
+        force_download=force_download or official_failed,
+        allow_patterns=allow_patterns,
+        ignore_patterns=ignore_patterns,
+    )
+
+def list_files(
+    repo_id: str,
+    *,
+    repo_type: str = REPO_TYPE_MODEL,
+    revision: Optional[str] = None,
+    token: Optional[str] = None,
+) -> List[FileInfo]:
+    """List files in a ModelScope repository."""
+    api = HubApi(token=token)
+    if repo_type == REPO_TYPE_DATASET:
+        raw = api.get_dataset_files(repo_id, revision=revision)
+    else:
+        raw = api.get_model_files(repo_id, revision=revision)
+    return [
+        FileInfo(
+            path=f.get("Path", f.get("path", f.get("Name", ""))),
+            size=f.get("Size", f.get("size", 0)) or 0,
+            type=f.get("Type", f.get("type", "blob")),
+            sha256=f.get("Sha256"),
+            metadata=f,
+        )
+        for f in raw
+    ]
+
+
+def get_repo_info(
+    repo_id: str,
+    *,
+    repo_type: str = REPO_TYPE_MODEL,
+    revision: Optional[str] = None,
+    token: Optional[str] = None,
+) -> RepoInfo:
+    """Return best-effort ModelScope repository metadata.
+
+    Enriches metadata from the ModelScope model/dataset detail API where
+    available, falling back to file-listing-only data when the detail API
+    is unreachable.
+    """
+    endpoint = get_endpoint()
+    api = HubApi(token=token)
+    files: list = []
+    try:
+        files = list_files(repo_id, repo_type=repo_type, revision=revision, token=token)
+    except Exception:
+        files = []
+
+    # Defaults (used when the detail API is unreachable)
+    license_val: Optional[str] = None
+    tags: list[str] = []
+    description: Optional[str] = None
+    author: Optional[str] = None
+    downloads: int = 0
+    likes: int = 0
+    created_at: Optional[str] = None
+    last_modified: Optional[str] = None
+    private: Optional[bool] = None
+
+    # -- enrich from the ModelScope detail API --------------------------------
+    try:
+        _ms_detail = _fetch_model_detail(repo_id, repo_type, endpoint, token)
+        if _ms_detail:
+            license_val = _ms_detail.get("License") or None
+
+            # Collect tags from multiple sources: Tags, Tasks, Libraries,
+            # Language, and ModelType fields.
+            _collected: set[str] = set()
+
+            # 1. Explicit Tags
+            raw_tags = _ms_detail.get("Tags")
+            if isinstance(raw_tags, list):
+                for t in raw_tags:
+                    if isinstance(t, str) and t.strip():
+                        _collected.add(t.strip())
+
+            # 2. Pipeline tasks (e.g. "text-generation", "文本生成")
+            raw_tasks = _ms_detail.get("Tasks")
+            if isinstance(raw_tasks, list):
+                for t in raw_tasks:
+                    if isinstance(t, dict):
+                        for k in ("Name", "ChineseName", "DomainName"):
+                            v = t.get(k)
+                            if isinstance(v, str) and v.strip():
+                                _collected.add(v.strip())
+
+            # 3. Libraries / frameworks (e.g. "Transformers", "Safetensors")
+            raw_libs = _ms_detail.get("Libraries")
+            if isinstance(raw_libs, list):
+                for lib in raw_libs:
+                    if isinstance(lib, dict):
+                        n = lib.get("Name")
+                        if isinstance(n, str) and n.strip():
+                            _collected.add(n.strip())
+                    elif isinstance(lib, str) and lib.strip():
+                        _collected.add(lib.strip())
+
+            # 4. Languages
+            raw_langs = _ms_detail.get("Language")
+            if isinstance(raw_langs, list):
+                for lang in raw_langs:
+                    if isinstance(lang, str) and lang.strip():
+                        _collected.add(lang.strip())
+
+            # 5. Model type (e.g. "qwen2")
+            raw_mt = _ms_detail.get("ModelType")
+            if isinstance(raw_mt, list):
+                for mt in raw_mt:
+                    if isinstance(mt, str) and mt.strip():
+                        _collected.add(mt.strip())
+
+            # 6. Frameworks (alternative key)
+            raw_fw = _ms_detail.get("Frameworks")
+            if isinstance(raw_fw, list):
+                for fw in raw_fw:
+                    if isinstance(fw, str) and fw.strip():
+                        _collected.add(fw.strip())
+
+            tags = sorted(_collected) if _collected else []
+
+            description = _ms_detail.get("Description") or _ms_detail.get("ChineseName") or None
+            # Author: prefer Organization.FullName, fall back to Path
+            org = _ms_detail.get("Organization")
+            if isinstance(org, dict):
+                author = org.get("FullName") or org.get("Name") or _ms_detail.get("Path")
+            else:
+                author = _ms_detail.get("Path")
+            downloads = _ms_detail.get("Downloads") or 0
+            likes = _ms_detail.get("Stars") or _ms_detail.get("Likes") or 0
+            ct = _ms_detail.get("CreatedTime")
+            if ct:
+                from datetime import datetime as _dt, timezone as _tz
+                created_at = _dt.fromtimestamp(int(ct), tz=_tz.utc).isoformat()
+            lut = _ms_detail.get("LastUpdatedTime")
+            if lut:
+                from datetime import datetime as _dt, timezone as _tz
+                last_modified = _dt.fromtimestamp(int(lut), tz=_tz.utc).isoformat()
+            is_pub = _ms_detail.get("IsPublished")
+            if is_pub is not None:
+                private = not bool(is_pub)
+    except Exception:
+        pass
+
+    url = f"{endpoint.rstrip('/')}/{'datasets' if repo_type == REPO_TYPE_DATASET else 'models'}/{repo_id}"
+    revision_val = api.get_valid_revision(repo_id, revision=revision, repo_type=repo_type)
+
+    return RepoInfo(
+        source="ms",
+        repo_type=repo_type,
+        repo_id=repo_id,
+        url=url,
+        author=author,
+        revision=revision_val,
+        private=private,
+        downloads=downloads,
+        likes=likes,
+        created_at=created_at,
+        last_modified=last_modified,
+        description=description,
+        license=license_val,
+        tags=tags,
+        metadata={"file_count": len(files)},
+    )
+
+
+def _fetch_model_detail(
+    repo_id: str,
+    repo_type: str,
+    endpoint: str,
+    token: Optional[str] = None,
+) -> Optional[dict]:
+    """Fetch model/dataset detail from the ModelScope API.
+
+    Returns the ``Data`` dict on success, or ``None`` on any failure.
+    """
+    import requests as _requests
+
+    type_seg = "datasets" if repo_type == REPO_TYPE_DATASET else "models"
+    url = f"{endpoint.rstrip('/')}/api/v1/{type_seg}/{repo_id}"
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        resp = _requests.get(url, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            body = resp.json()
+            if body.get("Code") == 200 and "Data" in body:
+                return body["Data"]
+    except Exception:
+        pass
+    return None
 
 
 def main():
@@ -768,6 +1300,8 @@ def main():
     parser.add_argument('--cache-dir', type=str, default=None, help='Cache directory for downloaded files')
     parser.add_argument('--local-dir', type=str, default=None, help='Local directory to download files to')
     parser.add_argument('--token', type=str, default=None, help='Access token for private models')
+    parser.add_argument('--backend', choices=['auto', 'official', 'lightweight'], default='auto',
+                        help='ModelScope backend to use (default: auto)')
     
     args = parser.parse_args()
 
@@ -781,7 +1315,8 @@ def main():
                     revision=args.revision,
                     cache_dir=args.cache_dir,
                     local_dir=args.local_dir,
-                    token=args.token
+                    token=args.token,
+                    backend=args.backend
                 )
             else:
                 result = dataset_file_download(
@@ -790,7 +1325,8 @@ def main():
                     revision=args.revision,
                     cache_dir=args.cache_dir,
                     local_dir=args.local_dir,
-                    token=args.token
+                    token=args.token,
+                    backend=args.backend
                 )
             print(f"Successfully downloaded file to: {result}")
         else:
@@ -801,7 +1337,8 @@ def main():
                 revision=args.revision,
                 cache_dir=args.cache_dir,
                 local_dir=args.local_dir,
-                token=args.token
+                token=args.token,
+                backend=args.backend
             )
             print(f"Repository download completed. Files are in: {result}")
     except Exception as e:

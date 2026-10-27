@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>modely-ai 企业级内部融合开源平台完整功能规划</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #e4e7ec;
+      --brand: #335cff;
+      --green: #12b76a;
+      --orange: #f79009;
+      --red: #f04438;
+      --blue-soft: #eef4ff;
+      --green-soft: #ecfdf3;
+      --orange-soft: #fff6ed;
+      --red-soft: #fef3f2;
+      --gray-soft: #f9fafb;
+      --shadow: 0 16px 44px rgba(16, 24, 40, .08);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(51, 92, 255, .14), transparent 34rem),
+        radial-gradient(circle at 90% 0%, rgba(18, 183, 106, .11), transparent 30rem),
+        var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.68;
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .page { max-width: 1200px; margin: 0 auto; padding: 44px 24px 80px; }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 48px;
+      border-radius: 30px;
+      background: linear-gradient(135deg, rgba(255,255,255,.98), rgba(238,244,255,.96));
+      border: 1px solid rgba(255,255,255,.85);
+      box-shadow: var(--shadow);
+    }
+    .hero:before {
+      content: "";
+      position: absolute;
+      right: -100px;
+      top: -100px;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: rgba(51, 92, 255, .12);
+    }
+    .hero:after {
+      content: "";
+      position: absolute;
+      right: 140px;
+      bottom: -120px;
+      width: 240px;
+      height: 240px;
+      border-radius: 50%;
+      background: rgba(18, 183, 106, .12);
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: #2446c2;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .02em;
+      position: relative;
+      z-index: 1;
+    }
+    h1 {
+      margin: 18px 0 16px;
+      max-width: 950px;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.08;
+      letter-spacing: -.04em;
+      position: relative;
+      z-index: 1;
+    }
+    .subtitle {
+      max-width: 980px;
+      margin: 0;
+      color: #344054;
+      font-size: 19px;
+      position: relative;
+      z-index: 1;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 34px;
+      position: relative;
+      z-index: 1;
+    }
+    .metric {
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.82);
+      border: 1px solid var(--line);
+    }
+    .metric strong { display: block; font-size: 25px; line-height: 1.2; }
+    .metric span { color: var(--muted); font-size: 14px; }
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 24px;
+      margin-top: 28px;
+      align-items: start;
+    }
+    .toc {
+      position: sticky;
+      top: 18px;
+      padding: 20px;
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.92);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 26px rgba(16, 24, 40, .04);
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+    }
+    .toc h2 { margin: 0 0 10px; font-size: 17px; }
+    .toc ol { margin: 0; padding-left: 20px; color: #475467; font-size: 14px; }
+    .toc li { margin: 7px 0; }
+    .content { min-width: 0; }
+    .section {
+      margin-bottom: 24px;
+      padding: 30px;
+      border-radius: var(--radius);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: 0 10px 26px rgba(16, 24, 40, .04);
+    }
+    .section h2 { margin: 0 0 16px; font-size: 28px; letter-spacing: -.02em; }
+    .section h3 { margin: 24px 0 10px; font-size: 20px; }
+    .section h4 { margin: 18px 0 8px; font-size: 17px; }
+    .lead { margin-top: 0; color: #475467; font-size: 17px; }
+    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+    .cards.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card { padding: 20px; border-radius: 16px; background: #fff; border: 1px solid var(--line); }
+    .card h3, .card h4 { margin-top: 0; }
+    .card p { margin-bottom: 0; color: #475467; }
+    .tag {
+      display: inline-flex;
+      margin: 4px 4px 4px 0;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #f2f4f7;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .tag.blue { background: var(--blue-soft); color: #2446c2; }
+    .tag.green { background: var(--green-soft); color: #027a48; }
+    .tag.orange { background: var(--orange-soft); color: #b54708; }
+    .tag.red { background: var(--red-soft); color: #b42318; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; margin-top: 14px; }
+    table { width: 100%; min-width: 760px; border-collapse: collapse; background: #fff; }
+    th, td { padding: 13px 15px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { background: #f9fafb; color: #344054; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: none; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 5px 0; }
+    .callout {
+      margin-top: 18px;
+      padding: 18px 20px;
+      border-radius: 16px;
+      background: var(--blue-soft);
+      border: 1px solid #c7d7fe;
+      color: #273b7a;
+    }
+    .callout.green { background: var(--green-soft); border-color: #abefc6; color: #05603a; }
+    .callout.orange { background: var(--orange-soft); border-color: #fedf89; color: #93370d; }
+    .flow { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+    .step {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #344054;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .step::after { content: " →"; color: var(--brand); margin-left: 8px; }
+    .step:last-child::after { content: ""; }
+    pre {
+      overflow-x: auto;
+      margin: 14px 0 0;
+      padding: 18px;
+      border-radius: 14px;
+      background: #101828;
+      color: #e6eaf2;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .architecture { display: grid; gap: 10px; margin-top: 16px; }
+    .layer { padding: 14px 18px; border-radius: 14px; border: 1px solid var(--line); background: #f9fafb; text-align: center; font-weight: 800; }
+    .layer.core { background: var(--blue-soft); color: #2446c2; }
+    .layer.storage { background: var(--green-soft); color: #027a48; }
+    .layer.external { background: var(--orange-soft); color: #b54708; }
+    .timeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+    .phase { padding: 20px; border-radius: 16px; border: 1px solid var(--line); background: #fff; }
+    .phase .num { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: #fff; font-weight: 900; margin-bottom: 12px; }
+    .phase h3 { margin: 0 0 8px; }
+    .phase ul { margin-bottom: 0; color: #475467; }
+    .muted { color: var(--muted); }
+    footer { margin-top: 30px; text-align: center; color: var(--muted); font-size: 14px; }
+    @media (max-width: 1080px) {
+      .layout { grid-template-columns: 1fr; }
+      .toc { position: static; max-height: none; }
+    }
+    @media (max-width: 900px) {
+      .hero-grid, .cards, .cards.two, .timeline { grid-template-columns: 1fr 1fr; }
+      .hero { padding: 34px; }
+    }
+    @media (max-width: 640px) {
+      .page { padding: 28px 14px 48px; }
+      .hero-grid, .cards, .cards.two, .timeline { grid-template-columns: 1fr; }
+      .hero, .section { padding: 24px; }
+      .step { width: 100%; border-radius: 12px; }
+      .step::after { content: ""; }
+    }
+    @media print {
+      body { background: #fff; }
+      .toc { display: none; }
+      .layout { display: block; }
+      .section, .hero { box-shadow: none; break-inside: avoid; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">modely-ai Enterprise PRD / 完整版</div>
+      <h1>企业级内部融合开源平台功能规划</h1>
+      <p class="subtitle">
+        将当前 modely-ai 从“跨平台 AI 资产工作台 / 外部模型资产引入层”升级为企业内部 AI 开源资产中台，用于自动同步 Hugging Face、ModelScope、Kaggle、GitHub 等开源网站的模型、数据集、工具等资源，并提供权限、存储、安全、合规、审计、分发和生命周期管理。
+      </p>
+      <div class="hero-grid">
+        <div class="metric"><strong>企业级</strong><span>内部 AI 开源资产中台</span></div>
+        <div class="metric"><strong>自动同步</strong><span>模型 / 数据集 / 工具资源</span></div>
+        <div class="metric"><strong>统一治理</strong><span>权限 / 存储 / 安全 / 审计</span></div>
+        <div class="metric"><strong>可信入口</strong><span>AI 资产供应链准入层</span></div>
+      </div>
+    </section>
+
+    <div class="layout">
+      <aside class="toc">
+        <h2>目录</h2>
+        <ol>
+          <li><a href="#positioning">平台核心定位</a></li>
+          <li><a href="#users">目标用户</a></li>
+          <li><a href="#overview">功能全景</a></li>
+          <li><a href="#sync">资源同步中心</a></li>
+          <li><a href="#catalog">资产目录 Catalog</a></li>
+          <li><a href="#auth">权限与访问控制</a></li>
+          <li><a href="#storage">存储管理</a></li>
+          <li><a href="#security">安全与合规治理</a></li>
+          <li><a href="#score">扫描、评分与质量评估</a></li>
+          <li><a href="#versioning">版本、锁文件与可复现性</a></li>
+          <li><a href="#search">搜索与发现</a></li>
+          <li><a href="#workflow">工作流与审批</a></li>
+          <li><a href="#api">API、CLI 与 SDK</a></li>
+          <li><a href="#ops">运维与平台管理</a></li>
+          <li><a href="#tenant">多租户与配额</a></li>
+          <li><a href="#phases">优先级分期</a></li>
+          <li><a href="#modules">建议新增模块</a></li>
+          <li><a href="#architecture">推荐技术架构</a></li>
+          <li><a href="#nfr">非功能需求</a></li>
+          <li><a href="#mvp">MVP 建议</a></li>
+          <li><a href="#summary">总结清单</a></li>
+        </ol>
+      </aside>
+
+      <div class="content">
+        <section id="positioning" class="section">
+          <h2>1. 平台核心定位</h2>
+          <p class="lead">
+            当前 modely-ai 更偏向 CLI/API 工具，已经具备跨平台下载、搜索、文件列表、资源比较、缓存管理、扫描、评分、审计、锁文件，以及 Hugging Face / ModelScope / GitHub / Kaggle 支持。企业级升级的核心，是从“工具”变成“服务平台”，从“按需下载”变成“自动同步”，从“本地缓存”变成“企业资产仓库”，从“资源工具”变成“AI 资产治理中台”。
+          </p>
+          <div class="callout">
+            <strong>推荐定位：</strong>企业级 AI 开源资产中台。统一同步、缓存、治理、分发和审计来自 Hugging Face、ModelScope、Kaggle、GitHub 等开源生态的模型、数据集、工具仓库，为企业内部研发、算法、平台、安全、合规团队提供可信、可控、可追溯的 AI 资产供应链入口。
+          </div>
+          <div class="cards">
+            <div class="card"><h3>从工具升级为服务平台</h3><p>CLI/API 继续保留，同时增加 Server、Web UI、管理后台、REST/gRPC API。</p></div>
+            <div class="card"><h3>从按需下载升级为自动同步</h3><p>支持定时同步、规则化同步、增量同步、版本追踪和失败恢复。</p></div>
+            <div class="card"><h3>从本地缓存升级为企业资产仓库</h3><p>统一存储、权限控制、元数据管理、生命周期管理和审计追踪。</p></div>
+            <div class="card"><h3>从资源工具升级为资产治理中台</h3><p>安全扫描、License 合规、Secret 检测、模型风险评级和使用审批。</p></div>
+            <div class="card"><h3>从外网直连升级为内部可信分发</h3><p>内部镜像、Signed URL、服务账号、下载审计和缓存命中优化。</p></div>
+            <div class="card"><h3>从单点能力升级为平台生态</h3><p>对接训练平台、推理平台、MLflow、DVC、CI/CD 和企业 SSO。</p></div>
+          </div>
+        </section>
+
+        <section id="users" class="section">
+          <h2>2. 目标用户</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>用户</th><th>需求</th><th>平台能力</th></tr></thead>
+              <tbody>
+                <tr><td>算法工程师 / 研究员</td><td>快速搜索可用模型、数据集、工具；使用内部缓存，避免直接访问外网；查看模型评分、License、风险信息；复现实验依赖；申请使用受限资源。</td><td>统一搜索、内部下载、资源详情、评分、扫描结果、lockfile、使用申请。</td></tr>
+                <tr><td>平台工程师 / MLOps 团队</td><td>管理资源同步规则；管理内部存储；管理资源版本；提供统一 API / CLI；对接训练平台、推理平台、模型注册中心。</td><td>同步中心、存储抽象、版本快照、REST API、SDK、Workers、平台集成。</td></tr>
+                <tr><td>安全 / 合规团队</td><td>License 风险识别；Secret / 恶意代码 / remote code 风险检测；外部资源引入审批；审计日志；黑白名单策略；CI Gate。</td><td>License 策略、Secret 扫描、Remote Code Warning、Policy Engine、审批流、审计报表。</td></tr>
+                <tr><td>企业管理员</td><td>用户、团队、角色权限管理；存储配额；同步任务监控；成本统计；资源使用报表；平台配置管理。</td><td>RBAC、多租户、配额、管理后台、监控告警、成本分析。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="overview" class="section">
+          <h2>3. 建议功能全景</h2>
+          <p class="lead">企业级平台建议拆成 12 个核心模块，覆盖外部资源接入、内部资产沉淀、治理审批、分发使用和平台运维。</p>
+          <div class="cards">
+            <div class="card"><h3>1. 资源同步中心</h3><p>多源同步、规则同步、定时任务、增量同步、Webhook、失败重试。</p></div>
+            <div class="card"><h3>2. 企业级资产目录</h3><p>统一元数据、资源状态、版本、标签、详情页、使用关系。</p></div>
+            <div class="card"><h3>3. 权限与访问控制</h3><p>用户、团队、角色、资源级 ACL、服务账号、API Token。</p></div>
+            <div class="card"><h3>4. 存储管理</h3><p>对象存储、配额、去重、生命周期、冷热分层、内部分发。</p></div>
+            <div class="card"><h3>5. 安全与合规治理</h3><p>License、Secret、Remote Code、数据集合规、策略引擎。</p></div>
+            <div class="card"><h3>6. 扫描、评分与评估</h3><p>模型、数据集、工具仓库的质量、安全、合规评分。</p></div>
+            <div class="card"><h3>7. 版本、锁文件与复现</h3><p>revision 固定、manifest、diff、approved snapshot、rollback。</p></div>
+            <div class="card"><h3>8. 搜索与发现</h3><p>多条件搜索、语义搜索、相似资源、替代资源、资产图谱。</p></div>
+            <div class="card"><h3>9. 工作流与审批</h3><p>资源引入流程、审批流、SLA、通知、CI/CD Gate。</p></div>
+            <div class="card"><h3>10. API、CLI 与 SDK</h3><p>REST/gRPC、Python SDK、Enterprise CLI、平台插件。</p></div>
+            <div class="card"><h3>11. 运维与平台管理</h3><p>任务队列、监控、告警、审计、部署、备份、失败恢复。</p></div>
+            <div class="card"><h3>12. 多租户与配额</h3><p>Organization、Workspace、Project、团队配额、成本统计。</p></div>
+          </div>
+        </section>
+
+        <section id="sync" class="section">
+          <h2>一、资源同步中心</h2>
+          <p class="lead">这是企业级平台最核心的新增能力。目标是从“用户临时下载”升级为“平台自动发现、同步、镜像、校验并准入”。</p>
+          <h3>3.1 多源同步</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Source</th><th>资源类型</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td>Hugging Face</td><td>模型、数据集、Spaces、文件</td><td>优先支持模型和数据集，后续可扩展 Space 元数据。</td></tr>
+                <tr><td>ModelScope</td><td>模型、数据集</td><td>支持轻量 HTTP 与官方 SDK 后端。</td></tr>
+                <tr><td>Kaggle</td><td>数据集、模型、竞赛数据</td><td>需要企业凭证管理和 API 配额控制。</td></tr>
+                <tr><td>GitHub</td><td>工具仓库、模型代码、数据处理工具</td><td>在当前产品语义中 GitHub 资源统一作为 tool。</td></tr>
+                <tr><td>GitLab / Gitee / 内部 Git</td><td>企业内部工具仓库</td><td>适合企业私有工具和模型工程仓库。</td></tr>
+                <tr><td>S3 / OSS / MinIO</td><td>内部对象存储资产</td><td>用于导入已有内部模型、数据集或归档文件。</td></tr>
+                <tr><td>自定义 HTTP Registry</td><td>第三方模型源</td><td>通过插件化 Source Provider 扩展。</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>3.2 同步模式</h3>
+          <div class="cards two">
+            <div class="card">
+              <h4>触发模式</h4>
+              <span class="tag green">手动同步</span><span class="tag green">定时同步</span><span class="tag green">Webhook 触发</span><span class="tag green">API 触发</span>
+            </div>
+            <div class="card">
+              <h4>数据范围</h4>
+              <span class="tag blue">增量同步</span><span class="tag blue">全量同步</span><span class="tag blue">指定版本同步</span><span class="tag blue">指定 tag/revision/branch</span>
+            </div>
+            <div class="card">
+              <h4>文件策略</h4>
+              <span class="tag orange">指定文件类型</span><span class="tag orange">include/exclude</span><span class="tag orange">只同步元数据</span><span class="tag orange">只同步 manifest</span>
+            </div>
+            <div class="card">
+              <h4>下载策略</h4>
+              <span class="tag">延迟下载文件</span><span class="tag">按需 materialize</span><span class="tag">限速</span><span class="tag">并发控制</span>
+            </div>
+          </div>
+          <pre><code>modely-ai sync add hf://models/Qwen/Qwen2.5-7B-Instruct \
+  --schedule "0 2 * * *" \
+  --include "*.safetensors,config.json,tokenizer.*" \
+  --policy enterprise-default</code></pre>
+
+          <h3>3.3 同步规则</h3>
+          <ul>
+            <li>按组织同步：同步某个 Hugging Face org 下所有模型。</li>
+            <li>按标签同步：同步带 <code>text-generation</code>、<code>embedding</code> 标签的模型。</li>
+            <li>按热度同步：下载量超过阈值。</li>
+            <li>按 License 同步：只同步 Apache-2.0 / MIT / BSD。</li>
+            <li>按文件大小同步：限制最大单文件大小。</li>
+            <li>按资源类型同步：model / dataset / tool。</li>
+            <li>按更新时间同步：只同步最近 N 天更新资源。</li>
+            <li>按安全策略同步：不允许 remote code 的资源。</li>
+          </ul>
+        </section>
+
+        <section id="catalog" class="section">
+          <h2>二、企业级资产目录 Catalog</h2>
+          <p class="lead">当前可以搜索和展示资源，但企业平台需要完整资产目录，承载统一资源模型、生命周期状态、元数据、风险、审批和使用关系。</p>
+          <h3>4.1 统一资源模型</h3>
+          <pre><code>Asset
+- id
+- source
+- source_url
+- resource_type: model / dataset / tool / space / notebook
+- namespace
+- name
+- version / revision / commit
+- license
+- tags
+- task_type
+- framework
+- size
+- file_count
+- checksum
+- owner_team
+- visibility
+- sync_status
+- risk_level
+- approval_status
+- created_at
+- updated_at
+- last_synced_at</code></pre>
+          <h3>4.2 资源状态</h3>
+          <div class="flow">
+            <div class="step">Discovered</div><div class="step">Syncing</div><div class="step">Synced</div><div class="step">Scanning</div><div class="step">Pending Approval</div><div class="step">Approved</div><div class="step">Published</div><div class="step">Deprecated</div><div class="step">Blocked</div><div class="step">Archived</div>
+          </div>
+          <h3>4.3 资源详情页</h3>
+          <div class="cards">
+            <div class="card"><h4>基础与来源</h4><p>基础信息、来源信息、source URL、namespace、repo type、tags。</p></div>
+            <div class="card"><h4>文件与版本</h4><p>文件列表、版本历史、manifest、checksum、revision diff。</p></div>
+            <div class="card"><h4>治理信息</h4><p>License、安全扫描、评分、审批记录、风险等级。</p></div>
+            <div class="card"><h4>使用方式</h4><p>下载命令、API 使用方式、内部 URL、SDK 示例。</p></div>
+            <div class="card"><h4>关系信息</h4><p>依赖关系、被哪些项目使用、训练任务和推理服务关联。</p></div>
+            <div class="card"><h4>审计信息</h4><p>同步记录、访问记录、审批记录、策略命中记录。</p></div>
+          </div>
+        </section>
+
+        <section id="auth" class="section">
+          <h2>三、权限与访问控制</h2>
+          <p class="lead">这是企业内部平台的关键能力。平台需要支持用户、团队、项目空间、角色、资源级权限、服务账号与访问审批。</p>
+          <h3>5.1 用户与组织</h3>
+          <span class="tag blue">用户</span><span class="tag blue">团队</span><span class="tag blue">部门</span><span class="tag blue">项目空间</span><span class="tag blue">角色</span><span class="tag blue">服务账号</span><span class="tag blue">API Token</span>
+          <h3>5.2 RBAC 权限模型</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>角色</th><th>权限</th></tr></thead>
+              <tbody>
+                <tr><td>Platform Admin</td><td>全局管理。</td></tr>
+                <tr><td>Security Admin</td><td>安全策略、审计、阻断。</td></tr>
+                <tr><td>Asset Admin</td><td>资源同步、发布、下架。</td></tr>
+                <tr><td>Team Admin</td><td>管理团队资源。</td></tr>
+                <tr><td>Developer</td><td>搜索、申请、下载。</td></tr>
+                <tr><td>Viewer</td><td>只读浏览。</td></tr>
+                <tr><td>Service Account</td><td>CI/CD、训练任务访问。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>5.3 资源级权限</h3>
+          <div class="cards two">
+            <div class="card"><h4>可见性</h4><p>全局可见、团队可见、项目可见、私有资源、受限资源、禁止访问资源。</p></div>
+            <div class="card"><h4>权限维度</h4><p><code>asset:read</code>、<code>asset:download</code>、<code>asset:sync</code>、<code>asset:publish</code>、<code>asset:approve</code>、<code>asset:delete</code>、<code>asset:scan</code>、<code>asset:manage_acl</code>。</p></div>
+          </div>
+          <h3>5.4 访问审批</h3>
+          <ul>
+            <li>使用申请。</li><li>审批流程。</li><li>审批人配置。</li><li>审批过期时间。</li><li>使用原因记录。</li><li>自动审批规则。</li><li>黑名单资源强制拒绝。</li>
+          </ul>
+        </section>
+
+        <section id="storage" class="section">
+          <h2>四、存储管理</h2>
+          <p class="lead">当前 cache 更偏本地目录，企业级平台需要存储层抽象、对象存储支持、配额、生命周期、完整性校验和内部分发。</p>
+          <h3>6.1 存储后端</h3>
+          <span class="tag green">本地磁盘</span><span class="tag green">NFS</span><span class="tag green">MinIO</span><span class="tag green">AWS S3</span><span class="tag green">阿里云 OSS</span><span class="tag green">腾讯云 COS</span><span class="tag green">华为云 OBS</span><span class="tag green">企业内部对象存储</span><span class="tag">HDFS 可选</span>
+          <h3>6.2 存储策略</h3>
+          <ul>
+            <li>按 source 分桶。</li><li>按团队分桶。</li><li>按资源类型分桶。</li><li>热 / 温 / 冷存储。</li><li>多副本。</li><li>跨地域复制。</li><li>存储配额。</li><li>自动清理。</li><li>归档策略。</li>
+          </ul>
+          <h3>6.3 去重与校验</h3>
+          <ul>
+            <li>文件级 SHA256。</li><li>Blob 去重。</li><li>大文件分片。</li><li>Range request。</li><li>断点续传。</li><li>完整性校验。</li><li>Manifest 校验。</li><li>Lockfile 校验。</li><li>Merkle tree，可选。</li>
+          </ul>
+          <h3>6.4 内部分发</h3>
+          <ul>
+            <li>内部下载 URL。</li><li>Signed URL。</li><li>临时 Token。</li><li>内部镜像地址。</li><li>CDN / 边缘缓存。</li><li>局域网加速。</li><li>与训练平台挂载集成。</li>
+          </ul>
+        </section>
+
+        <section id="security" class="section">
+          <h2>五、安全与合规治理</h2>
+          <p class="lead">这是从工具变成企业平台时必须补强的部分。企业内部外部资产准入需要可策略化、可阻断、可审计。</p>
+          <h3>7.1 License 合规</h3>
+          <ul>
+            <li>SPDX 标准化。</li><li>License 自动识别。</li><li>多 License 文件合并判断。</li><li>License 风险等级。</li><li>商用风险提示。</li><li>Copyleft 风险提示。</li><li>未声明 License 阻断。</li><li>License 策略模板。</li>
+          </ul>
+          <pre><code>license:
+  allow:
+    - Apache-2.0
+    - MIT
+    - BSD-3-Clause
+  warn:
+    - CC-BY-NC-4.0
+  block:
+    - GPL-3.0
+    - AGPL-3.0
+    - unknown</code></pre>
+          <h3>7.2 Secret 检测</h3>
+          <p>针对 GitHub 工具仓库、模型代码、配置文件，需要检测 API Key、Token、私钥、密码、云厂商凭证、数据库连接串、内部地址泄露。</p>
+          <h3>7.3 Remote Code 风险</h3>
+          <p>模型和工具资源中常见风险包括 <code>trust_remote_code=True</code>、自定义 Python module、<code>setup.py</code>、shell script、notebook、pickle、torch <code>.bin</code>、不可信动态 import。</p>
+          <ul>
+            <li>remote code warning。</li><li>静态代码扫描。</li><li>危险函数检测。</li><li>可执行文件检测。</li><li>pickle 风险提示。</li><li>高风险资源审批。</li>
+          </ul>
+          <h3>7.4 数据集合规</h3>
+          <ul>
+            <li>PII 检测。</li><li>敏感字段识别。</li><li>样本抽检。</li><li>数据来源记录。</li><li>数据用途限制。</li><li>数据集 License 检查。</li><li>数据集脱敏状态记录。</li>
+          </ul>
+          <h3>7.5 策略引擎</h3>
+          <pre><code>Policy Input:
+- source
+- resource_type
+- license
+- files
+- tags
+- risk_findings
+- owner
+- request_context
+
+Policy Output:
+- allow
+- warn
+- require_approval
+- block</code></pre>
+          <div class="callout orange">可以先实现内置 YAML 策略，后续支持 OPA/Rego。</div>
+        </section>
+
+        <section id="score" class="section">
+          <h2>六、扫描、评分与质量评估</h2>
+          <p class="lead">当前已有 scan、score、compare 等能力，企业化后需要增强为标准化治理能力，并统一报告输出。</p>
+          <div class="cards">
+            <div class="card"><h3>8.1 模型评分</h3><p>元数据完整性、README / model card 完整度、License 清晰度、下载热度、更新时间、文件完整性、权重格式、框架兼容性、安全风险、企业内部使用次数、是否通过审批。</p></div>
+            <div class="card"><h3>8.2 数据集评分</h3><p>数据说明完整度、License、数据量、文件格式、Schema 信息、敏感信息风险、质量报告、更新频率、可复现性。</p></div>
+            <div class="card"><h3>8.3 工具仓库评分</h3><p>README、License、Star / Fork / Issue 活跃度、最近更新时间、依赖风险、Secret 风险、可执行脚本风险、CI 状态、Release 状态。</p></div>
+          </div>
+          <h3>8.4 报告输出</h3>
+          <p>需要统一支持 JSON、Markdown、CSV、HTML、SARIF，以及可选 CycloneDX / SBOM。</p>
+          <pre><code>modely-ai scan hf://models/org/model --format sarif
+modely-ai audit export --format csv
+modely-ai score hf://models/org/model --format json</code></pre>
+        </section>
+
+        <section id="versioning" class="section">
+          <h2>七、版本、锁文件与可复现性</h2>
+          <p class="lead">企业内部使用外部 AI 资源，必须可追溯、可复现。</p>
+          <h3>9.1 版本追踪</h3>
+          <ul><li>revision / commit / tag 固定。</li><li>文件级 diff。</li><li>manifest diff。</li><li>metadata diff。</li><li>license diff。</li><li>risk diff。</li><li>model card diff。</li></ul>
+          <h3>9.2 Lockfile</h3>
+          <pre><code>resources:
+  - uri: hf://models/Qwen/Qwen2.5-7B-Instruct
+    revision: abc123
+    files:
+      - path: config.json
+        sha256: xxx
+      - path: model.safetensors
+        sha256: yyy
+    source_url: ...
+    internal_url: ...
+    approved_by: ...
+    approved_at: ...</code></pre>
+          <h3>9.3 资源快照</h3>
+          <ul><li>创建企业内部 snapshot。</li><li>snapshot immutable。</li><li>snapshot promotion。</li><li>dev / staging / prod 资源通道。</li><li>rollback。</li></ul>
+        </section>
+
+        <section id="search" class="section">
+          <h2>八、搜索与发现</h2>
+          <p class="lead">企业平台需要比 CLI 搜索更强的检索能力，既支持精确过滤，也支持语义推荐和资产关系分析。</p>
+          <h3>10.1 统一搜索</h3>
+          <ul><li>关键词搜索。</li><li>Source 过滤。</li><li>类型过滤。</li><li>License 过滤。</li><li>风险等级过滤。</li><li>审批状态过滤。</li><li>团队过滤。</li><li>标签过滤。</li><li>文件类型过滤。</li><li>更新时间过滤。</li></ul>
+          <h3>10.2 语义搜索</h3>
+          <ul><li>基于 README / model card 的语义搜索。</li><li>基于任务类型推荐模型。</li><li>相似模型推荐。</li><li>替代资源推荐。</li><li>企业内部使用趋势推荐。</li></ul>
+          <h3>10.3 资源关系图</h3>
+          <pre><code>模型 → 数据集
+模型 → 代码仓库
+模型 → 论文
+模型 → License
+工具 → 依赖库
+项目 → 使用资源
+训练任务 → 输入资源
+推理服务 → 部署模型</code></pre>
+        </section>
+
+        <section id="workflow" class="section">
+          <h2>九、工作流与审批</h2>
+          <p class="lead">企业环境中，资源不应该直接进入生产使用。平台需要提供从发现到发布的资源引入流程。</p>
+          <h3>11.1 资源引入流程</h3>
+          <div class="flow"><div class="step">发现资源</div><div class="step">同步元数据</div><div class="step">下载文件</div><div class="step">安全扫描</div><div class="step">License 检查</div><div class="step">评分</div><div class="step">人工审批</div><div class="step">发布到内部目录</div><div class="step">项目使用</div><div class="step">持续监控</div></div>
+          <h3>11.2 审批流</h3>
+          <ul><li>按资源类型审批。</li><li>按风险等级审批。</li><li>按 License 审批。</li><li>按团队审批。</li><li>多级审批。</li><li>审批 SLA。</li><li>审批通知。</li></ul>
+          <h3>11.3 CI/CD Gate</h3>
+          <pre><code>modely-ai policy check modely.lock --profile production</code></pre>
+          <p>如果发现未审批模型、License 阻断、checksum 不一致、remote code 高风险，则 CI 失败。</p>
+        </section>
+
+        <section id="api" class="section">
+          <h2>十、API、CLI 与 SDK</h2>
+          <p class="lead">企业平台需要支持 Web、CLI、SDK、REST/gRPC、CI 插件和内部平台集成等多种接入方式。</p>
+          <h3>12.1 REST API</h3>
+          <pre><code>GET  /api/assets
+GET  /api/assets/{id}
+POST /api/sync-jobs
+GET  /api/sync-jobs/{id}
+POST /api/assets/{id}/approve
+POST /api/assets/{id}/scan
+GET  /api/assets/{id}/download-url
+GET  /api/audit-events</code></pre>
+          <h3>12.2 Python SDK</h3>
+          <pre><code>from modely_enterprise import Client
+
+client = Client(base_url="https://modely.internal", token="...")
+asset = client.assets.get("hf://models/Qwen/Qwen2.5-7B-Instruct")
+path = client.assets.download(asset.id, revision="approved")</code></pre>
+          <h3>12.3 CLI</h3>
+          <pre><code>modely-ai login
+modely-ai sync add
+modely-ai sync list
+modely-ai asset search
+modely-ai asset approve
+modely-ai asset publish
+modely-ai policy check
+modely-ai admin quota</code></pre>
+          <h3>12.4 与内部平台集成</h3>
+          <span class="tag blue">训练平台</span><span class="tag blue">推理平台</span><span class="tag blue">Notebook 平台</span><span class="tag blue">MLflow</span><span class="tag blue">DVC</span><span class="tag blue">GitLab CI</span><span class="tag blue">Jenkins</span><span class="tag blue">Argo Workflows</span><span class="tag blue">Airflow</span><span class="tag blue">Kubernetes</span>
+        </section>
+
+        <section id="ops" class="section">
+          <h2>十一、运维与平台管理</h2>
+          <h3>13.1 任务调度</h3>
+          <ul><li>同步任务队列。</li><li>扫描任务队列。</li><li>重试。</li><li>并发控制。</li><li>优先级。</li><li>失败恢复。</li><li>死信队列。</li><li>任务日志。</li></ul>
+          <p>可选技术：Celery / RQ / Dramatiq / Argo Workflows / Kubernetes Jobs / Temporal。</p>
+          <h3>13.2 监控指标</h3>
+          <ul><li>同步成功率。</li><li>同步延迟。</li><li>外部源可用性。</li><li>下载速度。</li><li>存储使用量。</li><li>缓存命中率。</li><li>扫描耗时。</li><li>审批耗时。</li><li>热门资源。</li><li>风险资源数量。</li></ul>
+          <h3>13.3 审计日志</h3>
+          <ul><li>用户登录。</li><li>搜索资源。</li><li>下载资源。</li><li>创建同步任务。</li><li>修改策略。</li><li>审批资源。</li><li>删除资源。</li><li>访问受限资源。</li><li>API Token 使用。</li></ul>
+          <h3>13.4 多环境部署</h3>
+          <ul><li>单机部署。</li><li>Docker Compose。</li><li>Kubernetes Helm Chart。</li><li>高可用部署。</li><li>离线部署。</li><li>内网部署。</li></ul>
+        </section>
+
+        <section id="tenant" class="section">
+          <h2>十二、多租户与配额</h2>
+          <h3>14.1 多租户模型</h3>
+          <span class="tag green">Organization</span><span class="tag green">Workspace</span><span class="tag green">Project</span><span class="tag green">Team</span><span class="tag green">Environment</span>
+          <h3>14.2 配额管理</h3>
+          <ul><li>团队存储配额。</li><li>用户下载限额。</li><li>API 调用限额。</li><li>同步任务限额。</li><li>并发任务限额。</li><li>高风险资源申请次数限制。</li></ul>
+          <h3>14.3 成本统计</h3>
+          <ul><li>各团队存储占用。</li><li>各 source 同步成本。</li><li>热门资源。</li><li>冷资源。</li><li>可清理资源。</li><li>重复资源节省空间。</li></ul>
+        </section>
+
+        <section id="phases" class="section">
+          <h2>15. 企业级功能优先级建议</h2>
+          <p class="lead">建议分 4 个阶段建设，先把资产同步和目录跑通，再做权限审批与治理，之后对接研发/生产流程，最后做智能治理。</p>
+          <div class="timeline">
+            <div class="phase"><div class="num">1</div><h3>Phase 1：企业内部镜像与资产目录 MVP</h3><ul><li>Server API</li><li>Web UI 基础资产目录</li><li>多源资源同步任务</li><li>内部统一存储</li><li>基础用户认证</li><li>资源搜索</li><li>资源详情</li><li>文件列表</li><li>下载 URL</li><li>同步日志</li><li>基础 License 展示</li><li>基础安全扫描结果展示</li></ul></div>
+            <div class="phase"><div class="num">2</div><h3>Phase 2：权限、审批与治理</h3><ul><li>RBAC</li><li>团队 / 项目空间</li><li>资源可见性</li><li>下载权限</li><li>使用申请</li><li>审批流</li><li>License 策略</li><li>Secret 检测</li><li>Remote code 风险检测</li><li>Policy check</li><li>审计日志</li><li>JSON / Markdown / CSV 报告</li></ul></div>
+            <div class="phase"><div class="num">3</div><h3>Phase 3：版本、复现与平台集成</h3><ul><li>Lockfile 增强</li><li>Manifest diff</li><li>版本对比</li><li>Approved snapshot</li><li>CI Gate</li><li>MLflow 集成</li><li>DVC 集成</li><li>GitLab/Jenkins 集成</li><li>训练平台集成</li><li>推理平台集成</li><li>API Token / Service Account</li></ul></div>
+            <div class="phase"><div class="num">4</div><h3>Phase 4：智能治理与推荐</h3><ul><li>语义搜索</li><li>相似模型推荐</li><li>替代模型推荐</li><li>风险趋势分析</li><li>使用热度分析</li><li>资源生命周期自动治理</li><li>成本优化建议</li><li>企业内部资产图谱</li><li>自动生成合规报告</li><li>自动化模型/数据集准入评分</li></ul></div>
+          </div>
+          <div class="callout green">推荐产物：<code>modely-server</code>、<code>modely-web</code>、<code>modely-worker</code>、<code>modely CLI enterprise mode</code>。</div>
+        </section>
+
+        <section id="modules" class="section">
+          <h2>16. 建议新增的核心模块</h2>
+          <p class="lead">从代码架构上，未来可以拆成以下模块：</p>
+          <pre><code>src/modely/
+├── server/              # REST API / Web backend
+├── web/                 # 前端，或独立 repo
+├── db/                  # 数据模型与迁移
+├── sync/                # 同步任务
+├── storage/             # 存储抽象
+├── auth/                # 用户、团队、权限
+├── catalog/             # 资产目录
+├── policy/              # 策略引擎
+├── approval/            # 审批流
+├── security/            # Secret、License、Remote code 扫描
+├── lineage/             # 资源血缘
+├── workers/             # 后台任务
+├── api/                 # REST/gRPC schema
+├── integrations/        # MLflow、DVC、CI、训练平台集成
+└── admin/               # 管理后台能力</code></pre>
+        </section>
+
+        <section id="architecture" class="section">
+          <h2>17. 推荐技术架构</h2>
+          <div class="architecture">
+            <div class="layer">CLI / SDK / Web UI</div>
+            <div class="layer core">REST API / gRPC API</div>
+            <div class="layer core">Application Services</div>
+            <div class="layer core">Catalog / Sync / Policy / Auth / Storage / Audit</div>
+            <div class="layer storage">PostgreSQL + Object Storage + Queue + Search Engine</div>
+            <div class="layer storage">Workers</div>
+            <div class="layer external">External Sources: HF / ModelScope / Kaggle / GitHub</div>
+          </div>
+          <h3>推荐组件</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>能力</th><th>建议</th></tr></thead>
+              <tbody>
+                <tr><td>API 服务</td><td>FastAPI</td></tr>
+                <tr><td>数据库</td><td>PostgreSQL</td></tr>
+                <tr><td>搜索</td><td>OpenSearch / Elasticsearch / PostgreSQL FTS</td></tr>
+                <tr><td>对象存储</td><td>MinIO / S3 / OSS</td></tr>
+                <tr><td>队列</td><td>Redis Queue / Celery / Temporal</td></tr>
+                <tr><td>权限</td><td>RBAC + OIDC</td></tr>
+                <tr><td>登录</td><td>LDAP / SSO / OIDC</td></tr>
+                <tr><td>审计</td><td>PostgreSQL + 可选 ELK</td></tr>
+                <tr><td>部署</td><td>Docker Compose + Helm</td></tr>
+                <tr><td>策略</td><td>YAML policy，后续 OPA</td></tr>
+                <tr><td>报告</td><td>JSON / Markdown / CSV / SARIF</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="nfr" class="section">
+          <h2>18. 非功能需求</h2>
+          <div class="cards">
+            <div class="card"><h3>安全</h3><ul><li>全链路 HTTPS。</li><li>Token 加密存储。</li><li>API Token 最小权限。</li><li>外部源凭证隔离。</li><li>下载内容校验。</li><li>权限审计。</li><li>敏感日志脱敏。</li></ul></div>
+            <div class="card"><h3>可用性</h3><ul><li>Worker 可横向扩展。</li><li>同步任务可恢复。</li><li>存储后端高可用。</li><li>API 无状态。</li><li>支持限流。</li></ul></div>
+            <div class="card"><h3>性能</h3><ul><li>大文件断点续传。</li><li>分片下载。</li><li>缓存命中优化。</li><li>元数据索引。</li><li>搜索分页。</li><li>文件列表分页。</li></ul></div>
+            <div class="card"><h3>可观测性</h3><ul><li>Metrics。</li><li>Logs。</li><li>Traces。</li><li>Task timeline。</li><li>Sync diagnostics。</li></ul></div>
+            <div class="card"><h3>可扩展性</h3><ul><li>Source 插件。</li><li>Backend 插件。</li><li>Storage 插件。</li><li>Scanner 插件。</li><li>Policy 插件。</li><li>Report 插件。</li></ul></div>
+            <div class="card"><h3>可维护性</h3><ul><li>清晰模块边界。</li><li>数据库迁移。</li><li>配置中心。</li><li>灰度发布。</li><li>备份恢复。</li></ul></div>
+          </div>
+        </section>
+
+        <section id="mvp" class="section">
+          <h2>19. 最小可行版本 MVP 建议</h2>
+          <p class="lead">如果要快速落地，MVP 不要一开始做太大，先实现内部 AI 资产镜像 + 目录 + 同步 + 基础治理。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>模块</th><th>MVP 功能</th></tr></thead>
+              <tbody>
+                <tr><td>Server API</td><td>资产列表、资产详情、创建同步任务、查看同步状态、下载内部文件。</td></tr>
+                <tr><td>PostgreSQL 元数据表</td><td>assets、asset_versions、asset_files、sync_jobs、scan_reports、users、audit_events。</td></tr>
+                <tr><td>对象存储</td><td>本地目录 + MinIO 先支持，后续 S3/OSS。</td></tr>
+                <tr><td>Worker</td><td>同步资源、扫描资源、生成 manifest。</td></tr>
+                <tr><td>Web UI</td><td>搜索、详情页、同步任务页、风险信息页。</td></tr>
+                <tr><td>基础权限</td><td>Admin、Developer、Viewer。</td></tr>
+                <tr><td>基础治理</td><td>License 检查、checksum、remote code warning、secret scan。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="summary" class="section">
+          <h2>20. 总结：需要补齐的关键能力</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>方向</th><th>需要补齐</th></tr></thead>
+              <tbody>
+                <tr><td>同步</td><td>定时同步、增量同步、规则同步、Webhook、失败重试。</td></tr>
+                <tr><td>资产目录</td><td>统一元数据、资源状态、版本、标签、详情页。</td></tr>
+                <tr><td>权限</td><td>用户、团队、RBAC、资源级 ACL、服务账号。</td></tr>
+                <tr><td>存储</td><td>对象存储、去重、配额、生命周期、内部分发。</td></tr>
+                <tr><td>安全</td><td>License、Secret、Remote Code、恶意脚本、PII。</td></tr>
+                <tr><td>治理</td><td>策略引擎、审批流、准入规则、阻断机制。</td></tr>
+                <tr><td>审计</td><td>下载审计、审批审计、策略变更审计。</td></tr>
+                <tr><td>版本</td><td>Lockfile、manifest、diff、approved snapshot。</td></tr>
+                <tr><td>搜索</td><td>多条件搜索、语义搜索、相似资源推荐。</td></tr>
+                <tr><td>API</td><td>REST API、SDK、CLI enterprise mode。</td></tr>
+                <tr><td>集成</td><td>MLflow、DVC、CI/CD、训练平台、推理平台。</td></tr>
+                <tr><td>运维</td><td>Worker、队列、监控、告警、部署、备份。</td></tr>
+                <tr><td>报告</td><td>JSON、Markdown、CSV、SARIF、合规报告。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout green">
+            <strong>最推荐的演进路线：</strong>先做“内部 AI 资产镜像 + 目录 + 同步 + 基础治理”，再做“权限审批 + 安全合规 + CI Gate”，最后做“智能推荐 + 资产图谱 + 成本治理”。
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <footer>Generated for modely-ai · 企业级内部融合开源平台完整功能规划</footer>
+  </main>
+</body>
+</html>

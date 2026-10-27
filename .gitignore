@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Claude Code local files
+.claude/settings.local.json
+.claude/worktrees/
+
+# Project planning & task artifacts (not part of the package)
+tasks/
