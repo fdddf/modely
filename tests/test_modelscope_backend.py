@@ -40,14 +40,12 @@ class TestModelScopeBackendSelection:
             "owner/model",
             "config.json",
             revision="master",
-            cache_dir="/tmp/modely-cache",
             backend="auto",
         )
 
         assert result == "/official/config.json"
         assert called["model_id"] == "owner/model"
         assert called["file_path"] == "config.json"
-        assert called["local_dir"] == "/tmp/modely-cache/ms/models/owner--model/master"
 
     def test_model_file_auto_falls_back_when_official_fails(self, monkeypatch):
         called = {}
@@ -105,7 +103,6 @@ class TestModelScopeBackendSelection:
             "owner/model",
             repo_type="model",
             revision="master",
-            cache_dir="/tmp/modely-cache",
             allow_patterns=["*.json"],
             backend="auto",
         )
@@ -113,30 +110,8 @@ class TestModelScopeBackendSelection:
         assert result == "/official/repo"
         assert called["repo_id"] == "owner/model"
         assert called["allow_patterns"] == ["*.json"]
-        assert called["local_dir"] == "/tmp/modely-cache/ms/models/owner--model/master"
 
-    def test_snapshot_official_respects_local_dir(self, monkeypatch):
-        called = {}
-        monkeypatch.setattr(official_adapter, "is_available", lambda: True)
-
-        def fake_official(**kwargs):
-            called.update(kwargs)
-            return "/custom/repo"
-
-        monkeypatch.setattr(official_adapter, "snapshot_download", fake_official)
-
-        ms_mod.snapshot_download(
-            "owner/model",
-            repo_type="model",
-            revision="master",
-            cache_dir="/tmp/modely-cache",
-            local_dir="/custom/repo",
-            backend="auto",
-        )
-
-        assert called["local_dir"] == "/custom/repo"
-
-
+    def test_snapshot_lightweight_forces_fallback_path(self, monkeypatch):
         called = {}
         monkeypatch.setattr(official_adapter, "is_available", lambda: True)
 
@@ -172,22 +147,3 @@ class TestOfficialAdapter:
 
     def test_filter_none_removes_none_values(self):
         assert official_adapter._filter_none({"a": 1, "b": None}) == {"a": 1}
-
-
-def test_lightweight_snapshot_raises_when_model_file_list_empty(monkeypatch, tmp_path):
-    class FakeApi:
-        def __init__(self, token=None):
-            pass
-        def get_endpoint_for_read(self, *args, **kwargs):
-            return "https://modelscope.cn"
-        def get_valid_revision(self, *args, **kwargs):
-            return "master"
-        def get_cookies(self, *args, **kwargs):
-            return {}
-        def get_model_files(self, **kwargs):
-            return []
-
-    monkeypatch.setattr(ms_mod, "HubApi", FakeApi)
-
-    with pytest.raises(FileNotFoundError, match="owner/name"):
-        ms_mod.snapshot_download("missing-model", repo_type="model", cache_dir=str(tmp_path), backend="lightweight")

@@ -21,12 +21,9 @@ from modely.common.cache import (
     get_file_path,
     is_cached,
     get_cached_repo_path,
-    get_shared_cache_dir,
-    set_shared_cache_dir,
     list_cache,
     clean_cache,
     cache_info,
-    find_duplicate_files,
     _format_size,
 )
 
@@ -78,16 +75,6 @@ class TestCacheDir:
         result = get_cache_dir()
         assert result == os.path.abspath(tmp_cache)
 
-    def test_shared_cache_config(self, tmp_path, monkeypatch):
-        config_file = tmp_path / "config.json"
-        monkeypatch.setattr("modely.common.cache.CONFIG_FILE", str(config_file))
-        shared = tmp_path / "shared"
-
-        set_shared_cache_dir(str(shared))
-
-        assert get_shared_cache_dir() == os.path.abspath(shared)
-        assert cache_info()["shared_cache_dir"] == os.path.abspath(shared)
-
 
 class TestCacheStructure:
     def test_hf_model_path(self, tmp_cache):
@@ -102,11 +89,6 @@ class TestCacheStructure:
     def test_github_tool_path(self, tmp_cache):
         path = get_repo_cache_dir("torvalds/linux", "tool", "master", "github", tmp_cache)
         assert path == os.path.join(tmp_cache, "github", "tools", "torvalds--linux", "master")
-
-    def test_github_model_type_still_uses_tools_path(self, tmp_cache):
-        path = get_repo_cache_dir("keras-team/keras", "model", "master", "github", tmp_cache)
-        assert path == os.path.join(tmp_cache, "github", "tools", "keras-team--keras", "master")
-        assert os.path.join("github", "models") not in path
 
     def test_repo_id_normalization(self, tmp_cache):
         path = get_repo_cache_dir("owner/repo-name", "tool", "main", "github", tmp_cache)
@@ -255,23 +237,6 @@ class TestFormatSize:
 
     def test_gigabytes(self):
         assert _format_size(1024 ** 3) == "1.00 GB"
-
-
-
-def test_find_duplicate_files_reports_reclaimable_size(tmp_cache):
-    a = os.path.join(tmp_cache, "a.bin")
-    b_dir = os.path.join(tmp_cache, "nested")
-    os.makedirs(b_dir, exist_ok=True)
-    b = os.path.join(b_dir, "b.bin")
-    with open(a, "w") as f:
-        f.write("same")
-    with open(b, "w") as f:
-        f.write("same")
-
-    report = find_duplicate_files(tmp_cache)
-
-    assert len(report["duplicate_groups"]) == 1
-    assert report["reclaimable_size"] == 4
 
 
 class TestCacheInfo:

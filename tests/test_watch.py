@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 import modely
-from modely.syncing import watch
+from modely import watch
 
 
 def write_config(path, payload):
@@ -172,29 +172,12 @@ def test_modelscope_probe_warning_is_silenced(monkeypatch, capsys):
     assert "Warning:" not in capsys.readouterr().out
 
 
-def test_modelscope_empty_files_falls_back_to_repo_info(monkeypatch):
-    """When file listing returns empty, fall back to repo metadata fingerprint."""
-    target = watch.normalize_target({"source": "ms", "repo_type": "model", "repo_id": "owner/data"})
+def test_modelscope_snapshot_still_errors_when_listing_unavailable(monkeypatch):
+    target = watch.normalize_target({"source": "ms", "repo_type": "dataset", "repo_id": "owner/data"})
     monkeypatch.setattr(watch, "_modelscope_files", lambda _, __: [])
 
-    # Should NOT raise — falls back to repo info
-    fp = watch._ms_fingerprint(target, token=None)
-    assert isinstance(fp, str) and len(fp) == 64  # SHA256 hex digest
-
-
-def test_check_drift_updates_state(tmp_path, monkeypatch):
-    config_path = tmp_path / "watch.json"
-    state_path = tmp_path / "state.json"
-    write_config(config_path, {"state_file": str(state_path), "targets": [{"source": "hf", "repo_type": "model", "repo_id": "gpt2"}]})
-    write_config(state_path, {"hf:model:gpt2:main": {"fingerprint": "old"}})
-    monkeypatch.setattr(watch, "get_remote_fingerprint", lambda _: "new")
-
-    results = watch.check_drift(str(config_path))
-
-    assert results[0]["status"] == "drifted"
-    # State should be updated with the current fingerprint so the next
-    # drift check can detect actual changes.
-    assert json.loads(state_path.read_text())["hf:model:gpt2:main"]["fingerprint"] == "new"
+    with pytest.raises(RuntimeError, match="Could not list files"):
+        watch._ms_fingerprint(target, token=None)
 
 
 def test_run_prints_message_when_no_targets(capsys):

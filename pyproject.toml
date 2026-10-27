@@ -1,7 +1,7 @@
 [project]
 name = "modely-ai"
 version = "0.1.1"
-description = "Cross-platform AI model and dataset asset manager"
+description = "AI models download in one command"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -12,10 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
-server = ["fastapi>=0.100.0", "uvicorn>=0.23.0"]
 modelscope = ["modelscope>=1.0.0"]
-kaggle = ["kaggle>=1.6.0"]
-web = []  # Frontend served from pre-built dist/; Node.js required only for development
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -25,19 +22,8 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 include = ["modely*"]
 
-[tool.setuptools.package-data]
-"modely.server.web" = [
-    "dist/**/*",
-    "package.json",
-    "vite.config.ts",
-    "tsconfig.json",
-    "index.html",
-    "public/**/*",
-]
-
 [project.scripts]
 modely-ai = "modely:main"
-modely-server = "modely.server.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

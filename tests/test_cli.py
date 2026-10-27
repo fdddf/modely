@@ -9,14 +9,11 @@ import fnmatch
 import os
 import shutil
 import subprocess
-import sys
 
 import pytest
 
-import modely
 from modely.common import cache as cache_mod
 from modely.modelscope import snapshot_download as ms_snapshot_download
-from modely.types import RepoInfo
 
 
 @pytest.fixture
@@ -37,41 +34,6 @@ def run_cli(*args):
         text=True,
         timeout=120,
     )
-
-
-def test_info_cli_auto_repo_type_falls_back_to_dataset(monkeypatch, capsys):
-    calls = []
-
-    def fake_hf_info(repo_id, *, repo_type, **kwargs):
-        calls.append(repo_type)
-        if repo_type == "model":
-            raise Exception("Repository Not Found")
-        return RepoInfo("hf", "dataset", repo_id)
-
-    monkeypatch.setattr(sys, "argv", ["modely", "info", "HennyPr/ps2_hf2"])
-    monkeypatch.setattr("modely.hf.get_repo_info", fake_hf_info)
-
-    modely.main()
-
-    output = capsys.readouterr().out
-    assert "Repo type:     dataset" in output
-    assert "Repo ID:       HennyPr/ps2_hf2" in output
-    assert calls == ["model", "dataset"]
-
-
-def test_get_cli_dry_run_prints_download_plan(monkeypatch, capsys, tmp_path):
-    from modely.types import FileInfo
-
-    monkeypatch.setattr(sys, "argv", ["modely", "get", "--dry-run", "hf://datasets/org/data", "--cache-dir", str(tmp_path)])
-    monkeypatch.setattr("modely.plan.list_repo_files", lambda *args, **kwargs: [FileInfo("README.md", size=5)])
-
-    modely.main()
-
-    output = capsys.readouterr().out
-    assert "Source:        hf" in output
-    assert "Repo type:     dataset" in output
-    assert "Selected:      1" in output
-    assert "Downloaded to:" not in output
 
 
 # ── Hugging Face ──────────────────────────────────────────────

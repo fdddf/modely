@@ -1,6 +1,7 @@
 """Display formatting for modely-ai search results."""
 
 import json
+from dataclasses import asdict
 from typing import List
 
 from .types import SearchResult
@@ -51,14 +52,13 @@ def format_table(results: List[SearchResult]) -> str:
     if not results:
         return "No results found."
 
-    headers = ["Source", "Type", "ID", "Task", "Downloads", "Likes", "Created", "Last Modified", "URL"]
+    headers = ["Source", "ID", "Task", "Downloads", "Likes", "Created", "Last Modified", "URL"]
     rows = []
     col_widths = [len(h) for h in headers]
 
     for r in results:
         row = [
             r.source.upper(),
-            r.repo_type or "-",
             _truncate_id(r.id),
             r.pipeline_tag or "-",
             _format_count(r.downloads),
@@ -86,6 +86,7 @@ def format_json(results: List[SearchResult]) -> str:
     """Format search results as pretty-printed JSON."""
 
     def _serialize(r: SearchResult) -> dict:
-        return r.to_dict()
+        d = asdict(r)
+        return d
 
     return json.dumps([_serialize(r) for r in results], indent=2, ensure_ascii=False)

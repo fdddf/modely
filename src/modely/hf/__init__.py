@@ -13,7 +13,6 @@ from huggingface_hub import hf_hub_download, snapshot_download as hf_snapshot_do
 from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 
 from modely.common import cache as hf_cache
-from modely.types import FileInfo, RepoInfo
 
 
 def hf_file_download(
@@ -85,7 +84,6 @@ def snapshot_download(
     allow_patterns: Optional[List] = None,
     ignore_patterns: Optional[List] = None,
     force_download: bool = False,
-    max_workers: Optional[int] = None,
 ) -> str:
     """
     Download all files from a Hugging Face repository using huggingface_hub SDK.
@@ -104,26 +102,20 @@ def snapshot_download(
     Returns:
         Path to the directory containing downloaded files
     """
+    # Check if entire repo is already cached
+    if not force_download:
+        cached_path = hf_cache.get_cached_repo_path(
+            repo_id, repo_type, revision, "hf", cache_dir
+        )
+        if cached_path:
+            print(f"Repository already cached at: {cached_path}")
+            return cached_path
+
     # Determine cache directory
     if cache_dir is None:
         cache_dir = hf_cache.get_cache_dir()
     else:
         cache_dir = hf_cache.get_cache_dir(cache_dir)
-
-    # Use modely's repo cache dir as local_dir so files land in the expected
-    # place.  The HF SDK cache is managed separately by huggingface_hub.
-    local_repo_dir = hf_cache.get_repo_cache_dir(
-        repo_id, repo_type, revision, "hf", cache_dir
-    )
-
-    # Check if already cached
-    if not force_download and not local_dir:
-        if os.path.isdir(local_repo_dir):
-            # Count actual files (not just .cache metadata dir)
-            real_files = [f for f in os.listdir(local_repo_dir) if f != ".cache"]
-            if real_files:
-                print(f"Repository already cached ({len(real_files)} files) at: {local_repo_dir}")
-                return local_repo_dir
 
     # Convert repo_type to huggingface_hub format
     repo_type_map = {"model": "model", "dataset": "dataset", "space": "space"}
@@ -135,78 +127,17 @@ def snapshot_download(
             repo_type=hf_repo_type,
             revision=revision,
             cache_dir=cache_dir,
-            local_dir=local_dir or local_repo_dir,
+            local_dir=local_dir,
             token=token,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
             force_download=force_download,
-            max_workers=max_workers,
         )
         return repo_path
     except (RepositoryNotFoundError, RevisionNotFoundError) as e:
         raise Exception(f"Repository or revision not found: {e}")
     except Exception as e:
         raise Exception(f"Failed to download repository: {e}")
-
-
-def list_files(
-    repo_id: str,
-    *,
-    repo_type: str = "model",
-    revision: str = "main",
-    token: Optional[str] = None,
-    endpoint: Optional[str] = None,
-) -> List[FileInfo]:
-    """List files in a Hugging Face repository."""
-    from huggingface_hub import HfApi
-
-    api = HfApi(endpoint=endpoint, token=token)
-    paths = api.list_repo_files(repo_id, repo_type=repo_type, revision=revision)
-    try:
-        info_list = api.get_paths_info(repo_id, paths, repo_type=repo_type, revision=revision)
-        return [
-            FileInfo(path=p, size=getattr(info, "size", 0) or 0, type="blob")
-            for p, info in zip(paths, info_list)
-        ]
-    except Exception:
-        return [FileInfo(path=p) for p in paths]
-
-
-def get_repo_info(
-    repo_id: str,
-    *,
-    repo_type: str = "model",
-    revision: str = "main",
-    token: Optional[str] = None,
-    endpoint: Optional[str] = None,
-) -> RepoInfo:
-    """Return Hugging Face repository metadata."""
-    from huggingface_hub import HfApi
-
-    api = HfApi(endpoint=endpoint, token=token)
-    info = api.repo_info(repo_id, repo_type=repo_type, revision=revision)
-    siblings = getattr(info, "siblings", None) or []
-    tags = getattr(info, "tags", None) or []
-    card_data = getattr(info, "card_data", None)
-    license_name = card_data.get("license") if isinstance(card_data, dict) else None
-    prefix = "datasets/" if repo_type == "dataset" else "spaces/" if repo_type == "space" else ""
-    return RepoInfo(
-        source="hf",
-        repo_type=repo_type,
-        repo_id=getattr(info, "id", repo_id),
-        url=f"https://huggingface.co/{prefix}{repo_id}",
-        author=getattr(info, "author", None),
-        revision=revision,
-        private=getattr(info, "private", None),
-        downloads=getattr(info, "downloads", 0) or 0,
-        likes=getattr(info, "likes", 0) or 0,
-        created_at=str(getattr(info, "created_at", "")) or None,
-        last_modified=str(getattr(info, "last_modified", "")) or None,
-        description=getattr(info, "description", None),
-        license=license_name,
-        tags=tags,
-        metadata={"sha": getattr(info, "sha", None), "file_count": len(siblings)},
-    )
 
 
 def main():

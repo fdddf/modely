@@ -22,7 +22,6 @@ from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from modely.common import cache as ms_cache
-from modely.types import FileInfo, RepoInfo
 import requests
 from requests.adapters import Retry
 from tqdm.auto import tqdm
@@ -107,17 +106,14 @@ def get_model_files_url(model_id: str, revision: str, endpoint: Optional[str] = 
 
 
 def get_dataset_files_url(dataset_id: str, revision: str, endpoint: Optional[str] = None):
-    """Get the URL to list dataset files.
-
-    ModelScope uses ``/repo/tree`` for datasets (``/repo/files`` is for models).
-    """
+    """Get the URL to list dataset files."""
     dataset_id_encoded = urllib.parse.quote(dataset_id, safe='/')
     revision = urllib.parse.quote(revision, safe='') if revision else 'master'
 
     if not endpoint:
         endpoint = get_endpoint()
 
-    return f"{endpoint}/api/v1/datasets/{dataset_id_encoded}/repo/tree?Revision={revision}"
+    return f"{endpoint}/api/v1/datasets/{dataset_id_encoded}/repo/files?Revision={revision}"
 
 
 def file_integrity_validation(file_path: str, expected_hash: str):
@@ -435,30 +431,18 @@ class HubApi:
         """Get the list of files in a model repository."""
         if not revision:
             revision = DEFAULT_MODEL_REVISION
-
+        
         # Get the endpoint and cookies
         if not endpoint:
             endpoint = self.endpoint
         if use_cookies is None:
             use_cookies = self.get_cookies()
-
+        
         # Build the URL to get model files
         model_files_url = get_model_files_url(model_id, revision, endpoint)
-
-        # Retry on transient failures (same strategy as file downloads)
-        session = requests.Session()
-        retry = Retry(
-            total=API_FILE_DOWNLOAD_RETRY_TIMES,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=['GET'],
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
-        session.mount('https://', adapter)
-        session.mount('http://', adapter)
-
+        
         try:
-            response = session.get(
+            response = requests.get(
                 model_files_url,
                 cookies=use_cookies,
                 timeout=API_FILE_DOWNLOAD_TIMEOUT
@@ -469,15 +453,7 @@ class HubApi:
             data = response.json()
             
             # Extract files from the response - adjust based on actual API response format
-            if isinstance(data, dict):
-                data_section = data.get('Data')
-                files = data_section.get('Files') if isinstance(data_section, dict) else None
-            else:
-                files = None
-            # .get('Files') may return None even when the key exists;
-            # ensure we always have a list.
-            if not isinstance(files, list):
-                files = []
+            files = data.get('Data', {}).get('Files', []) if isinstance(data, dict) else []
             
             # Format files to match expected structure
             repo_files = []
@@ -500,15 +476,10 @@ class HubApi:
                     })
             
             return repo_files
-        except requests.HTTPError as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', 0) or 0
-            if status == 404:
-                print(f"Warning: Model not found: {model_id}")
-                return []
-            raise Exception(f"Failed to fetch model file list (HTTP {status}): {e}")
         except Exception as e:
             print(f"Warning: Could not fetch file list from API: {e}")
-            raise
+            # Return an empty list if API call fails, as this is an optional feature for single file downloads
+            return []
 
 
     def get_dataset_files(self, dataset_id: str, revision: str = None, recursive: bool = True,
@@ -526,20 +497,8 @@ class HubApi:
         # Build the URL to get dataset files
         dataset_files_url = get_dataset_files_url(dataset_id, revision, endpoint)
 
-        # Retry on transient failures (same strategy as file downloads)
-        session = requests.Session()
-        retry = Retry(
-            total=API_FILE_DOWNLOAD_RETRY_TIMES,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=['GET'],
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
-        session.mount('https://', adapter)
-        session.mount('http://', adapter)
-
         try:
-            response = session.get(
+            response = requests.get(
                 dataset_files_url,
                 cookies=use_cookies,
                 timeout=API_FILE_DOWNLOAD_TIMEOUT
@@ -551,9 +510,7 @@ class HubApi:
 
             # Extract files from the response
             data_dict = data.get('Data') if isinstance(data, dict) else None
-            files = data_dict.get('Files') if isinstance(data_dict, dict) else None
-            if not isinstance(files, list):
-                files = []
+            files = data_dict.get('Files', []) if isinstance(data_dict, dict) else []
 
             # Format files to match expected structure
             repo_files = []
@@ -574,15 +531,9 @@ class HubApi:
                     })
 
             return repo_files
-        except requests.HTTPError as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', 0) or 0
-            if status == 404:
-                print(f"Warning: Dataset not found: {dataset_id}")
-                return []
-            raise Exception(f"Failed to fetch dataset file list (HTTP {status}): {e}")
         except Exception as e:
             print(f"Warning: Could not fetch dataset file list from API: {e}")
-            raise
+            return []
 
 def _lightweight_model_file_download(
     model_id: str,
@@ -653,17 +604,6 @@ def _should_use_official_backend(backend: str) -> bool:
     return available
 
 
-def _official_local_dir(repo_id: str, repo_type: str, revision: Optional[str], cache_dir, local_dir: Optional[str]) -> Optional[str]:
-    """Return the local directory for official SDK downloads."""
-    if local_dir:
-        return local_dir
-    default_revision = DEFAULT_DATASET_REVISION if repo_type == REPO_TYPE_DATASET else DEFAULT_MODEL_REVISION
-    base = ms_cache.get_cache_dir(cache_dir)
-    repo_dir = repo_id.replace("/", "--")
-    type_dir = "datasets" if repo_type == REPO_TYPE_DATASET else "models" if repo_type == REPO_TYPE_MODEL else repo_type
-    return os.path.join(base, "ms", type_dir, repo_dir, revision or default_revision)
-
-
 def model_file_download(
     model_id: str,
     file_path: str,
@@ -684,13 +624,13 @@ def model_file_download(
                 file_path=file_path,
                 revision=revision,
                 cache_dir=cache_dir,
-                local_dir=_official_local_dir(model_id, REPO_TYPE_MODEL, revision, cache_dir, local_dir),
+                local_dir=local_dir,
                 token=token,
             )
-        except Exception as exc:
+        except Exception:
             if backend == "official":
                 raise
-            print(f"Warning: Official ModelScope SDK failed, falling back to lightweight backend: {exc}")
+            print("Warning: Official ModelScope SDK failed, falling back to lightweight backend.")
 
     return _lightweight_model_file_download(
         model_id=model_id,
@@ -724,13 +664,13 @@ def dataset_file_download(
                 file_path=file_path,
                 revision=revision,
                 cache_dir=cache_dir,
-                local_dir=_official_local_dir(dataset_id, REPO_TYPE_DATASET, revision, cache_dir, local_dir),
+                local_dir=local_dir,
                 token=token,
             )
-        except Exception as exc:
+        except Exception:
             if backend == "official":
                 raise
-            print(f"Warning: Official ModelScope SDK failed, falling back to lightweight backend: {exc}")
+            print("Warning: Official ModelScope SDK failed, falling back to lightweight backend.")
 
     return _lightweight_dataset_file_download(
         dataset_id=dataset_id,
@@ -923,14 +863,6 @@ def create_temporary_directory(repo_id: str, local_dir: str = None, cache_dir: s
     return temporary_cache_dir
 
 
-def _empty_snapshot_message(repo_id: str, repo_type: str, revision: str, endpoint: str) -> str:
-    hint = "ModelScope repository IDs usually use the owner/name form; verify the namespace and revision."
-    if repo_type == REPO_TYPE_DATASET:
-        hint = "Dataset snapshot listing may be unavailable; verify the dataset owner/name or use --file for a known file."
-    return (f"No files found for ModelScope {repo_type} '{repo_id}' at revision '{revision}' "
-            f"from {endpoint}. {hint}")
-
-
 def _lightweight_snapshot_download(
     repo_id: str,
     repo_type: str = REPO_TYPE_MODEL,
@@ -999,10 +931,10 @@ def _lightweight_snapshot_download(
             endpoint=endpoint
         )
         if not repo_files:
-            raise FileNotFoundError(_empty_snapshot_message(repo_id, repo_type, revision, endpoint))
-
-    if not repo_files:
-        raise FileNotFoundError(_empty_snapshot_message(repo_id, repo_type, revision, endpoint))
+            print("Warning: Unable to list dataset files (API not supported). "
+                  "Dataset snapshot download is not fully supported. "
+                  "Use 'modely-ai ms --repo-type dataset <repo_id> --file <file_path>' to download individual files.")
+            return None
 
     # Process each file and download
     download_files = [f for f in repo_files if f.get('Type') != 'tree']
@@ -1065,7 +997,6 @@ def snapshot_download(
     backend: str = "auto",
 ) -> str:
     """Download all files from a repository using official SDK or lightweight backend."""
-    official_failed = False
     if _should_use_official_backend(backend):
         from . import official_adapter
         try:
@@ -1074,16 +1005,15 @@ def snapshot_download(
                 repo_type=repo_type,
                 revision=revision,
                 cache_dir=cache_dir,
-                local_dir=_official_local_dir(repo_id, repo_type, revision, cache_dir, local_dir),
+                local_dir=local_dir,
                 token=token,
                 allow_patterns=allow_patterns,
                 ignore_patterns=ignore_patterns,
             )
-        except Exception as exc:
+        except Exception:
             if backend == "official":
                 raise
-            official_failed = True
-            print(f"Warning: Official ModelScope SDK failed, falling back to lightweight backend: {exc}")
+            print("Warning: Official ModelScope SDK failed, falling back to lightweight backend.")
 
     return _lightweight_snapshot_download(
         repo_id=repo_id,
@@ -1094,201 +1024,10 @@ def snapshot_download(
         cookies=cookies,
         local_dir=local_dir,
         token=token,
-        force_download=force_download or official_failed,
+        force_download=force_download,
         allow_patterns=allow_patterns,
         ignore_patterns=ignore_patterns,
     )
-
-def list_files(
-    repo_id: str,
-    *,
-    repo_type: str = REPO_TYPE_MODEL,
-    revision: Optional[str] = None,
-    token: Optional[str] = None,
-) -> List[FileInfo]:
-    """List files in a ModelScope repository."""
-    api = HubApi(token=token)
-    if repo_type == REPO_TYPE_DATASET:
-        raw = api.get_dataset_files(repo_id, revision=revision)
-    else:
-        raw = api.get_model_files(repo_id, revision=revision)
-    return [
-        FileInfo(
-            path=f.get("Path", f.get("path", f.get("Name", ""))),
-            size=f.get("Size", f.get("size", 0)) or 0,
-            type=f.get("Type", f.get("type", "blob")),
-            sha256=f.get("Sha256"),
-            metadata=f,
-        )
-        for f in raw
-    ]
-
-
-def get_repo_info(
-    repo_id: str,
-    *,
-    repo_type: str = REPO_TYPE_MODEL,
-    revision: Optional[str] = None,
-    token: Optional[str] = None,
-) -> RepoInfo:
-    """Return best-effort ModelScope repository metadata.
-
-    Enriches metadata from the ModelScope model/dataset detail API where
-    available, falling back to file-listing-only data when the detail API
-    is unreachable.
-    """
-    endpoint = get_endpoint()
-    api = HubApi(token=token)
-    files: list = []
-    try:
-        files = list_files(repo_id, repo_type=repo_type, revision=revision, token=token)
-    except Exception:
-        files = []
-
-    # Defaults (used when the detail API is unreachable)
-    license_val: Optional[str] = None
-    tags: list[str] = []
-    description: Optional[str] = None
-    author: Optional[str] = None
-    downloads: int = 0
-    likes: int = 0
-    created_at: Optional[str] = None
-    last_modified: Optional[str] = None
-    private: Optional[bool] = None
-
-    # -- enrich from the ModelScope detail API --------------------------------
-    try:
-        _ms_detail = _fetch_model_detail(repo_id, repo_type, endpoint, token)
-        if _ms_detail:
-            license_val = _ms_detail.get("License") or None
-
-            # Collect tags from multiple sources: Tags, Tasks, Libraries,
-            # Language, and ModelType fields.
-            _collected: set[str] = set()
-
-            # 1. Explicit Tags
-            raw_tags = _ms_detail.get("Tags")
-            if isinstance(raw_tags, list):
-                for t in raw_tags:
-                    if isinstance(t, str) and t.strip():
-                        _collected.add(t.strip())
-
-            # 2. Pipeline tasks (e.g. "text-generation", "文本生成")
-            raw_tasks = _ms_detail.get("Tasks")
-            if isinstance(raw_tasks, list):
-                for t in raw_tasks:
-                    if isinstance(t, dict):
-                        for k in ("Name", "ChineseName", "DomainName"):
-                            v = t.get(k)
-                            if isinstance(v, str) and v.strip():
-                                _collected.add(v.strip())
-
-            # 3. Libraries / frameworks (e.g. "Transformers", "Safetensors")
-            raw_libs = _ms_detail.get("Libraries")
-            if isinstance(raw_libs, list):
-                for lib in raw_libs:
-                    if isinstance(lib, dict):
-                        n = lib.get("Name")
-                        if isinstance(n, str) and n.strip():
-                            _collected.add(n.strip())
-                    elif isinstance(lib, str) and lib.strip():
-                        _collected.add(lib.strip())
-
-            # 4. Languages
-            raw_langs = _ms_detail.get("Language")
-            if isinstance(raw_langs, list):
-                for lang in raw_langs:
-                    if isinstance(lang, str) and lang.strip():
-                        _collected.add(lang.strip())
-
-            # 5. Model type (e.g. "qwen2")
-            raw_mt = _ms_detail.get("ModelType")
-            if isinstance(raw_mt, list):
-                for mt in raw_mt:
-                    if isinstance(mt, str) and mt.strip():
-                        _collected.add(mt.strip())
-
-            # 6. Frameworks (alternative key)
-            raw_fw = _ms_detail.get("Frameworks")
-            if isinstance(raw_fw, list):
-                for fw in raw_fw:
-                    if isinstance(fw, str) and fw.strip():
-                        _collected.add(fw.strip())
-
-            tags = sorted(_collected) if _collected else []
-
-            description = _ms_detail.get("Description") or _ms_detail.get("ChineseName") or None
-            # Author: prefer Organization.FullName, fall back to Path
-            org = _ms_detail.get("Organization")
-            if isinstance(org, dict):
-                author = org.get("FullName") or org.get("Name") or _ms_detail.get("Path")
-            else:
-                author = _ms_detail.get("Path")
-            downloads = _ms_detail.get("Downloads") or 0
-            likes = _ms_detail.get("Stars") or _ms_detail.get("Likes") or 0
-            ct = _ms_detail.get("CreatedTime")
-            if ct:
-                from datetime import datetime as _dt, timezone as _tz
-                created_at = _dt.fromtimestamp(int(ct), tz=_tz.utc).isoformat()
-            lut = _ms_detail.get("LastUpdatedTime")
-            if lut:
-                from datetime import datetime as _dt, timezone as _tz
-                last_modified = _dt.fromtimestamp(int(lut), tz=_tz.utc).isoformat()
-            is_pub = _ms_detail.get("IsPublished")
-            if is_pub is not None:
-                private = not bool(is_pub)
-    except Exception:
-        pass
-
-    url = f"{endpoint.rstrip('/')}/{'datasets' if repo_type == REPO_TYPE_DATASET else 'models'}/{repo_id}"
-    revision_val = api.get_valid_revision(repo_id, revision=revision, repo_type=repo_type)
-
-    return RepoInfo(
-        source="ms",
-        repo_type=repo_type,
-        repo_id=repo_id,
-        url=url,
-        author=author,
-        revision=revision_val,
-        private=private,
-        downloads=downloads,
-        likes=likes,
-        created_at=created_at,
-        last_modified=last_modified,
-        description=description,
-        license=license_val,
-        tags=tags,
-        metadata={"file_count": len(files)},
-    )
-
-
-def _fetch_model_detail(
-    repo_id: str,
-    repo_type: str,
-    endpoint: str,
-    token: Optional[str] = None,
-) -> Optional[dict]:
-    """Fetch model/dataset detail from the ModelScope API.
-
-    Returns the ``Data`` dict on success, or ``None`` on any failure.
-    """
-    import requests as _requests
-
-    type_seg = "datasets" if repo_type == REPO_TYPE_DATASET else "models"
-    url = f"{endpoint.rstrip('/')}/api/v1/{type_seg}/{repo_id}"
-    headers: dict[str, str] = {"Accept": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    try:
-        resp = _requests.get(url, headers=headers, timeout=15)
-        if resp.status_code == 200:
-            body = resp.json()
-            if body.get("Code") == 200 and "Data" in body:
-                return body["Data"]
-    except Exception:
-        pass
-    return None
-
 
 def main():
     """Main function to handle command-line arguments."""

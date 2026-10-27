@@ -14,10 +14,7 @@ from .types import SearchResult
 from .hf_search import search_huggingface
 from .ms_search import search_modelscope
 from .gh_search import search_github
-from .kaggle_search import search_kaggle
 from .display import format_table, format_json
-from .dedupe import dedupe_results, format_grouped_json, format_grouped_table
-from ..uri import repo_type_candidates
 
 
 # Sort field mapping for cross-platform result sorting
@@ -101,16 +98,10 @@ def search(
         List of ``SearchResult`` objects.
     """
 
-    def _fetch_for_repo_types(source_name, fetch):
-        results = []
-        for candidate_type in repo_type_candidates(repo_type, source_name):
-            results.extend(fetch(candidate_type))
-        return results
-
     def _fetch_hf():
-        return _fetch_for_repo_types("hf", lambda candidate_type: search_huggingface(
+        return search_huggingface(
             keyword=keyword,
-            repo_type=candidate_type,
+            repo_type=repo_type,
             task=task,
             library=library,
             license=license,
@@ -119,21 +110,21 @@ def search(
             limit=limit,
             author=author,
             full=full,
-        ))
+        )
 
     def _fetch_ms():
         if library:
             warnings.warn("--library filter is not supported on ModelScope, ignoring.")
         if license:
             warnings.warn("--license filter is not supported on ModelScope, ignoring.")
-        return _fetch_for_repo_types("ms", lambda candidate_type: search_modelscope(
+        return search_modelscope(
             keyword=keyword,
-            repo_type=candidate_type,
+            repo_type=repo_type,
             task=task,
             sort=sort,
             direction=direction,
             limit=limit,
-        ))
+        )
 
     def _fetch_gh():
         if library:
@@ -147,22 +138,14 @@ def search(
             limit=limit,
         )
 
-    def _fetch_kg():
-        if library:
-            warnings.warn("--library filter is not supported on Kaggle, ignoring.")
-        if license:
-            warnings.warn("--license filter is not supported on Kaggle, ignoring.")
-        return search_kaggle(keyword=keyword, repo_type=repo_type_candidates(repo_type, "kaggle")[0], limit=limit)
-
     all_results: List[SearchResult] = []
 
     if source == "all":
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(_fetch_hf): "hf",
                 executor.submit(_fetch_ms): "ms",
                 executor.submit(_fetch_gh): "github",
-                executor.submit(_fetch_kg): "kaggle",
             }
             for future in as_completed(futures):
                 try:
@@ -175,8 +158,6 @@ def search(
         all_results = _fetch_ms()
     elif source == "github":
         all_results = _fetch_gh()
-    elif source == "kaggle":
-        all_results = _fetch_kg()
     else:
         raise ValueError(f"Unknown source: {source}")
 
@@ -213,13 +194,7 @@ def main(args) -> None:
             full=getattr(args, "full", False),
         )
 
-        if getattr(args, "dedupe", False) or getattr(args, "compare", False):
-            groups = dedupe_results(results)
-            if args.json:
-                print(format_grouped_json(groups))
-            else:
-                print(format_grouped_table(groups, compare=getattr(args, "compare", False)))
-        elif args.json:
+        if args.json:
             print(format_json(results))
         else:
             print(format_table(results))

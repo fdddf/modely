@@ -44,8 +44,6 @@ class TestSearchResult:
         assert r.downloads == 0
         assert r.likes == 0
         assert r.tags == []
-        assert r.name == "b"
-        assert r.modely_uri == "hf://models/a/b"
 
     def test_full_fields(self):
         r = SearchResult(
@@ -65,8 +63,6 @@ class TestSearchResult:
         )
         assert r.author == "author1"
         assert r.downloads == 100
-        assert r.summary == "desc"
-        assert r.stars == 10
 
 
 # ── Display ─────────────────────────────────────────────────────
@@ -107,7 +103,6 @@ class TestFormatTable:
         output = format_table([r])
         assert "org/model" in output
         assert "HF" in output
-        assert "model" in output
         assert "text-gen" in output
         assert "1.0K" in output
 
@@ -129,8 +124,6 @@ class TestFormatJson:
         parsed = json.loads(j)
         assert parsed[0]["id"] == "a/b"
         assert parsed[0]["source"] == "hf"
-        assert parsed[0]["modely_uri"] == "hf://models/a/b"
-        assert "metadata" in parsed[0]
 
     def test_empty(self):
         assert format_json([]) == "[]"
@@ -164,20 +157,6 @@ class TestHuggingFaceSearch:
         results = hf_mod.search_huggingface("test", repo_type="dataset")
         assert len(results) == 1
         assert results[0].id == "org/dataset"
-        assert results[0].repo_type == "dataset"
-        assert results[0].url == "https://huggingface.co/datasets/org/dataset"
-
-    def test_space_url_uses_spaces_prefix(self, monkeypatch):
-        fake_info = _mock_model_info(id="org/space")
-
-        def mock_list_models(self, **kwargs):
-            return [fake_info]
-
-        monkeypatch.setattr(hf_mod.HfApi, "list_models", mock_list_models)
-
-        results = hf_mod.search_huggingface("test", repo_type="space")
-
-        assert results[0].url == "https://huggingface.co/spaces/org/space"
 
     def test_empty_results(self, monkeypatch):
         def mock_list_models(self, **kwargs):
@@ -283,8 +262,8 @@ class TestHuggingFaceSearch:
         hf_mod.search_huggingface("test", full=True)
         assert captured["full"] is True
 
-    def test_full_flag_true_by_default(self, monkeypatch):
-        """Verify full=True by default (needed for author, license tags, etc.)."""
+    def test_full_flag_false_by_default(self, monkeypatch):
+        """Verify full=False by default (not full=True)."""
         captured = {}
 
         def mock_list_models(self, **kwargs):
@@ -293,7 +272,7 @@ class TestHuggingFaceSearch:
 
         monkeypatch.setattr(hf_mod.HfApi, "list_models", mock_list_models)
         hf_mod.search_huggingface("test")
-        assert captured.get("full") is True
+        assert captured.get("full") is False or captured.get("full") is None
 
     def test_limit_passed_to_api(self, monkeypatch):
         """Verify the limit parameter is passed to the API."""
@@ -1351,22 +1330,6 @@ class TestSearchOrchestrator:
         results = search("test", source="hf", repo_type="dataset")
         assert len(results) == 1
         assert results[0].id == "org/dataset"
-
-    def test_auto_repo_type_fans_out_to_supported_types(self, monkeypatch):
-        calls = {"hf": [], "ms": [], "github": 0, "kaggle": []}
-
-        monkeypatch.setattr(search_mod, "search_huggingface", lambda **kwargs: calls["hf"].append(kwargs["repo_type"]) or [SearchResult(f"hf/{kwargs['repo_type']}", "hf", kwargs["repo_type"])])
-        monkeypatch.setattr(search_mod, "search_modelscope", lambda **kwargs: calls["ms"].append(kwargs["repo_type"]) or [SearchResult(f"ms/{kwargs['repo_type']}", "ms", kwargs["repo_type"])])
-        monkeypatch.setattr(search_mod, "search_github", lambda **kwargs: calls.__setitem__("github", calls["github"] + 1) or [SearchResult("owner/repo", "github", "tool")])
-        monkeypatch.setattr(search_mod, "search_kaggle", lambda **kwargs: calls["kaggle"].append(kwargs["repo_type"]) or [SearchResult("owner/dataset", "kaggle", kwargs["repo_type"])])
-
-        results = search("test", source="all", repo_type="auto")
-
-        assert calls["hf"] == ["model", "dataset"]
-        assert calls["ms"] == ["model", "dataset"]
-        assert calls["github"] == 1
-        assert calls["kaggle"] == ["dataset"]
-        assert {result.repo_type for result in results} >= {"model", "dataset", "tool"}
 
     def test_default_sort_is_downloads(self, monkeypatch):
         """When no sort specified, default to downloads descending."""

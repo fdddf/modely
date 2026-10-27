@@ -15,8 +15,6 @@ import requests
 from tqdm import tqdm
 
 from modely.common import cache as github_cache
-from modely.types import FileInfo, RepoInfo
-from modely.uri import normalize_github_repo_id
 
 
 def github_file_download(
@@ -28,7 +26,6 @@ def github_file_download(
     local_dir: Optional[str] = None,
     token: Optional[str] = None,
     force_download: bool = False,
-    timeout: Optional[float] = None,
 ) -> str:
     """
     Download a single file from a GitHub repository.
@@ -45,7 +42,6 @@ def github_file_download(
     Returns:
         Path to the downloaded file
     """
-    repo_id = normalize_github_repo_id(repo_id)
     # Check cache first
     if not force_download:
         cached = github_cache.is_cached(
@@ -61,7 +57,7 @@ def github_file_download(
     # Determine save location
     if local_dir:
         file_path = os.path.join(local_dir, filename)
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        os.makedirs(local_dir, exist_ok=True)
     else:
         file_path = github_cache.get_file_path(
             repo_id, filename, revision, "tool", "github", cache_dir
@@ -78,7 +74,7 @@ def github_file_download(
         headers["Authorization"] = f"token {token}"
 
     try:
-        response = requests.get(url, headers=headers, stream=True, timeout=timeout or 30)
+        response = requests.get(url, headers=headers, stream=True, timeout=30)
         response.raise_for_status()
 
         total_size = int(response.headers.get("content-length", 0))
@@ -105,137 +101,12 @@ def github_file_download(
         raise Exception(f"Failed to download {filename}: {e}")
 
 
-def _github_headers(token: Optional[str] = None) -> dict:
-    headers = {"User-Agent": "modely-ai", "Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return headers
-
-
-def github_repo_info(repo_id: str, *, revision: str = "main", token: Optional[str] = None) -> RepoInfo:
-    """Get GitHub repository metadata."""
-    repo_id = normalize_github_repo_id(repo_id)
-    resp = requests.get(f"https://api.github.com/repos/{repo_id}", headers=_github_headers(token), timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    license_info = data.get("license") or {}
-    return RepoInfo(
-        source="github",
-        repo_type="tool",
-        repo_id=data.get("full_name", repo_id),
-        url=data.get("html_url", f"https://github.com/{repo_id}"),
-        author=(data.get("owner") or {}).get("login"),
-        revision=revision or data.get("default_branch"),
-        private=data.get("private"),
-        likes=data.get("stargazers_count", 0) or 0,
-        forks=data.get("forks_count", 0) or 0,
-        created_at=data.get("created_at"),
-        last_modified=data.get("updated_at"),
-        description=data.get("description"),
-        license=license_info.get("spdx_id"),
-        tags=data.get("topics") or [],
-        metadata={"default_branch": data.get("default_branch")},
-    )
-
-
-def _resolve_tree_sha(repo_id: str, revision: str, token: Optional[str] = None) -> str:
-    repo_id = normalize_github_repo_id(repo_id)
-    resp = requests.get(
-        f"https://api.github.com/repos/{repo_id}/git/trees/{quote(revision, safe='')}",
-        params={"recursive": "1"},
-        headers=_github_headers(token),
-        timeout=30,
-    )
-    if resp.status_code == 404 and revision == "main":
-        default = get_default_branch(repo_id, token)
-        if default and default != revision:
-            return _resolve_tree_sha(repo_id, default, token)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def github_list_files(repo_id: str, *, revision: str = "main", token: Optional[str] = None) -> list[FileInfo]:
-    """List files in a GitHub repository using the Git Trees API."""
-    data = _resolve_tree_sha(repo_id, revision, token)
-    result = []
-    for item in data.get("tree", []):
-        result.append(FileInfo(
-            path=item.get("path", ""),
-            size=item.get("size", 0) or 0,
-            type="tree" if item.get("type") == "tree" else "blob",
-            sha256=item.get("sha"),
-            metadata=item,
-        ))
-    return result
-
-
-def github_release_assets(repo_id: str, *, release: Optional[str] = None, token: Optional[str] = None) -> list[FileInfo]:
-    """List GitHub release assets."""
-    if release:
-        url = f"https://api.github.com/repos/{repo_id}/releases/tags/{quote(release, safe='')}"
-        releases = [requests.get(url, headers=_github_headers(token), timeout=30).json()]
-    else:
-        url = f"https://api.github.com/repos/{repo_id}/releases"
-        r = requests.get(url, headers=_github_headers(token), timeout=30)
-        r.raise_for_status()
-        releases = r.json()
-    assets = []
-    for rel in releases:
-        for asset in rel.get("assets", []) or []:
-            assets.append(FileInfo(
-                path=asset.get("name", ""),
-                size=asset.get("size", 0) or 0,
-                type="asset",
-                download_url=asset.get("browser_download_url"),
-                metadata={"release": rel.get("tag_name"), "asset_id": asset.get("id")},
-            ))
-    return assets
-
-
-def github_release_asset_download(
-    repo_id: str,
-    asset: str,
-    *,
-    release: Optional[str] = None,
-    cache_dir: Optional[Union[str, Path]] = None,
-    local_dir: Optional[str] = None,
-    token: Optional[str] = None,
-    force_download: bool = False,
-) -> str:
-    """Download a GitHub release asset by name."""
-    assets = github_release_assets(repo_id, release=release, token=token)
-    match = next((a for a in assets if a.path == asset), None)
-    if not match or not match.download_url:
-        raise Exception(f"Release asset not found: {asset}")
-    revision = release or "releases"
-    if not force_download and github_cache.is_cached(repo_id, asset, revision, "tool", "github", cache_dir):
-        path = github_cache.get_file_path(repo_id, asset, revision, "tool", "github", cache_dir)
-        print(f"File already cached at: {path}")
-        return path
-    if local_dir:
-        file_path = os.path.join(local_dir, asset)
-        os.makedirs(local_dir, exist_ok=True)
-    else:
-        file_path = github_cache.get_file_path(repo_id, asset, revision, "tool", "github", cache_dir)
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    headers = _github_headers(token)
-    r = requests.get(match.download_url, headers=headers, stream=True, timeout=60)
-    r.raise_for_status()
-    total_size = int(r.headers.get("content-length", 0))
-    with open(file_path, "wb") as f:
-        with tqdm(total=total_size, unit="B", unit_scale=True, desc=asset) as pbar:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    pbar.update(len(chunk))
-    return file_path
-
-
 def get_default_branch(repo_id: str, token: Optional[str] = None) -> Optional[str]:
     """Get the default branch of a GitHub repository via API."""
-    repo_id = normalize_github_repo_id(repo_id)
     url = f"https://api.github.com/repos/{repo_id}"
-    headers = _github_headers(token)
+    headers = {"User-Agent": "modely-ai"}
+    if token:
+        headers["Authorization"] = f"token {token}"
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
@@ -253,9 +124,6 @@ def github_clone(
     token: Optional[str] = None,
     with_lfs: bool = False,
     force_download: bool = False,
-    allow_patterns: Optional[list[str]] = None,
-    ignore_patterns: Optional[list[str]] = None,
-    submodules: bool = False,
 ) -> str:
     """
     Clone a GitHub repository using git.
@@ -272,7 +140,6 @@ def github_clone(
     Returns:
         Path to the cloned repository
     """
-    repo_id = normalize_github_repo_id(repo_id)
     # Resolve actual revision (use default branch if needed)
     actual_revision = revision
     if not force_download and revision == "main":
@@ -284,7 +151,7 @@ def github_clone(
     # Check cache first
     if not force_download:
         cached_path = github_cache.get_cached_repo_path(
-            repo_id, "tool", actual_revision, "github", cache_dir
+            repo_id, "model", actual_revision, "github", cache_dir
         )
         if cached_path and os.path.exists(os.path.join(cached_path, ".git")):
             print(f"Repository already cached at: {cached_path}")
@@ -295,7 +162,7 @@ def github_clone(
         target_dir = local_dir
     else:
         target_dir = github_cache.get_repo_cache_dir(
-            repo_id, "tool", actual_revision, "github", cache_dir
+            repo_id, "model", actual_revision, "github", cache_dir
         )
 
     # Build git URL with optional token authentication
@@ -318,15 +185,11 @@ def github_clone(
         "clone",
         "--depth",
         "1",
-    ]
-    if allow_patterns:
-        cmd.extend(["--filter=blob:none", "--sparse"])
-    cmd.extend([
         "--branch",
         revision,
         git_url,
         repo_name,
-    ])
+    ]
 
     def _cleanup_on_failure(target):
         """Clean up target directory if clone failed."""
@@ -404,7 +267,7 @@ def github_clone(
                     # Rebuild target_dir with correct branch
                     if not local_dir:
                         target_dir = github_cache.get_repo_cache_dir(
-                            repo_id, "tool", default_branch, "github", cache_dir
+                            repo_id, "model", default_branch, "github", cache_dir
                         )
                         repo_name = os.path.basename(target_dir)
                         parent_dir = os.path.dirname(target_dir)
@@ -432,31 +295,8 @@ def github_clone(
             if result.returncode != 0:
                 raise Exception(f"Git clone failed: {result.stderr}")
 
-        # Apply sparse checkout/include patterns when requested.
-        if allow_patterns:
-            sparse_cmd = ["git", "sparse-checkout", "set", *allow_patterns]
-            sparse_result = subprocess.run(sparse_cmd, cwd=target_dir, capture_output=True, text=True)
-            if sparse_result.returncode != 0:
-                print(f"Warning: git sparse-checkout failed: {sparse_result.stderr}")
-
-        if submodules:
-            submodule_result = subprocess.run(
-                ["git", "submodule", "update", "--init", "--recursive"],
-                cwd=target_dir,
-                capture_output=True,
-                text=True,
-            )
-            if submodule_result.returncode != 0:
-                print(f"Warning: git submodule update failed: {submodule_result.stderr}")
-
-        if ignore_patterns:
-            _remove_ignored_files(target_dir, ignore_patterns)
-
         # Git LFS support
         if with_lfs:
-            if shutil.which("git-lfs") is None and subprocess.run(["git", "lfs", "version"], capture_output=True).returncode != 0:
-                print("Warning: Git LFS is not installed; large files may remain as pointer files.")
-                return target_dir
             lfs_result = subprocess.run(
                 ["git", "lfs", "pull"],
                 cwd=target_dir,
@@ -474,22 +314,6 @@ def github_clone(
         )
     except Exception as e:
         raise Exception(f"Failed to clone repository: {e}")
-
-
-def _remove_ignored_files(root: str, ignore_patterns: list[str]) -> None:
-    """Remove files matching ignore patterns after clone."""
-    import fnmatch
-    for dirpath, dirnames, filenames in os.walk(root):
-        if ".git" in dirpath.split(os.sep):
-            continue
-        for name in filenames:
-            path = os.path.join(dirpath, name)
-            rel = os.path.relpath(path, root)
-            if any(fnmatch.fnmatch(rel, pat) for pat in ignore_patterns):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
 
 
 # Alias for consistency with hf/ms modules
