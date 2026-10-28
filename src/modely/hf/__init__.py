@@ -102,14 +102,9 @@ def snapshot_download(
     Returns:
         Path to the directory containing downloaded files
     """
-    # Check if entire repo is already cached
-    if not force_download:
-        cached_path = hf_cache.get_cached_repo_path(
-            repo_id, repo_type, revision, "hf", cache_dir
-        )
-        if cached_path:
-            print(f"Repository already cached at: {cached_path}")
-            return cached_path
+    # No early "already cached" return here: huggingface_hub skips files it already
+    # has for the resolved commit, honours allow/ignore patterns and local_dir, and
+    # resumes partial downloads, so it is the only reliable judge of completeness.
 
     # Determine cache directory
     if cache_dir is None:

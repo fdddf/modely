@@ -484,6 +484,49 @@ class TestHFSnapshotPatterns:
         hf_snap("test/repo", force_download=True)
         assert len(cache_checked) == 0
 
+    def test_populated_modely_cache_dir_does_not_short_circuit(self, monkeypatch, tmp_path):
+        """A non-empty modely repo dir must not skip the SDK (patterns may differ)."""
+        from modely.hf import snapshot_download as hf_snap
+        import modely.common.cache as hf_cache
+
+        repo_dir = hf_cache.get_repo_cache_dir("test/repo", "model", "main", "hf", str(tmp_path))
+        with open(os.path.join(repo_dir, "config.json"), "w") as f:
+            f.write("{}")
+
+        captured = {}
+
+        def mock_snapshot_download(**kwargs):
+            captured.update(kwargs)
+            return "/fake/path"
+
+        monkeypatch.setattr("modely.hf.hf_snapshot_download_sdk", mock_snapshot_download)
+
+        result = hf_snap("test/repo", cache_dir=str(tmp_path), allow_patterns=["*.safetensors"])
+        assert result == "/fake/path"
+        assert captured["allow_patterns"] == ["*.safetensors"]
+
+    def test_local_dir_not_replaced_by_modely_cache_dir(self, monkeypatch, tmp_path):
+        """local_dir must reach the SDK even when the modely repo dir is populated."""
+        from modely.hf import snapshot_download as hf_snap
+        import modely.common.cache as hf_cache
+
+        cache = tmp_path / "cache"
+        repo_dir = hf_cache.get_repo_cache_dir("test/repo", "model", "main", "hf", str(cache))
+        with open(os.path.join(repo_dir, "config.json"), "w") as f:
+            f.write("{}")
+
+        captured = {}
+
+        def mock_snapshot_download(**kwargs):
+            captured.update(kwargs)
+            return kwargs["local_dir"]
+
+        monkeypatch.setattr("modely.hf.hf_snapshot_download_sdk", mock_snapshot_download)
+
+        target = str(tmp_path / "out")
+        assert hf_snap("test/repo", cache_dir=str(cache), local_dir=target) == target
+        assert captured["local_dir"] == target
+
 
 # ── MS Snapshot Download Filtering (unit tests) ─────────────────
 
