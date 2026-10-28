@@ -116,6 +116,20 @@ def get_dataset_files_url(dataset_id: str, revision: str, endpoint: Optional[str
     return f"{endpoint}/api/v1/datasets/{dataset_id_encoded}/repo/files?Revision={revision}"
 
 
+def _get_with_retry(url: str, cookies=None) -> requests.Response:
+    """GET with retries on transient failures (timeouts, connection errors, 429/5xx)."""
+    retry = Retry(
+        total=API_FILE_DOWNLOAD_RETRY_TIMES,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=['GET'])
+    adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+    with requests.Session() as session:
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+        return session.get(url, cookies=cookies, timeout=API_FILE_DOWNLOAD_TIMEOUT)
+
+
 def file_integrity_validation(file_path: str, expected_hash: str):
     """Validate file integrity by comparing SHA256 hash."""
     with open(file_path, 'rb') as f:
@@ -442,11 +456,7 @@ class HubApi:
         model_files_url = get_model_files_url(model_id, revision, endpoint)
         
         try:
-            response = requests.get(
-                model_files_url,
-                cookies=use_cookies,
-                timeout=API_FILE_DOWNLOAD_TIMEOUT
-            )
+            response = _get_with_retry(model_files_url, cookies=use_cookies)
             response.raise_for_status()
             
             # Parse the response - actual API response format may vary
@@ -498,11 +508,7 @@ class HubApi:
         dataset_files_url = get_dataset_files_url(dataset_id, revision, endpoint)
 
         try:
-            response = requests.get(
-                dataset_files_url,
-                cookies=use_cookies,
-                timeout=API_FILE_DOWNLOAD_TIMEOUT
-            )
+            response = _get_with_retry(dataset_files_url, cookies=use_cookies)
             response.raise_for_status()
 
             # Parse the response

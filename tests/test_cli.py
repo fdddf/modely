@@ -1450,6 +1450,69 @@ class TestURLConstruction:
         assert "Revision=master" in url
 
 
+# ── MS file listing retries (unit tests, local HTTP server) ─────
+
+class TestMSFileListingRetry:
+    """File listing must retry transient failures instead of returning [] at once."""
+
+    @pytest.fixture
+    def flaky_server(self, monkeypatch):
+        """Local server that fails ``state['failures']`` times with 503, then lists one file."""
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from modely import modelscope as ms_mod
+
+        state = {"failures": 2, "calls": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                state["calls"] += 1
+                if state["calls"] <= state["failures"]:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+                body = json.dumps({"Data": {"Files": [{"Path": "config.json", "Size": 7}]}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        monkeypatch.setattr(ms_mod.Retry, "get_backoff_time", lambda self: 0)
+        yield f"http://127.0.0.1:{server.server_port}", state
+        server.shutdown()
+        server.server_close()
+
+    def test_model_files_retries_transient_503(self, flaky_server):
+        from modely.modelscope import HubApi
+        endpoint, state = flaky_server
+        files = HubApi().get_model_files("org/model", endpoint=endpoint)
+        assert [f["Path"] for f in files] == ["config.json"]
+        assert state["calls"] == 3
+
+    def test_dataset_files_retries_transient_503(self, flaky_server):
+        from modely.modelscope import HubApi
+        endpoint, state = flaky_server
+        files = HubApi().get_dataset_files("org/dataset", endpoint=endpoint)
+        assert [f["Path"] for f in files] == ["config.json"]
+        assert state["calls"] == 3
+
+    def test_gives_up_after_retry_budget(self, flaky_server):
+        from modely.modelscope import API_FILE_DOWNLOAD_RETRY_TIMES, HubApi
+        endpoint, state = flaky_server
+        state["failures"] = 100
+        files = HubApi().get_model_files("org/model", endpoint=endpoint)
+        assert files == []
+        assert state["calls"] == API_FILE_DOWNLOAD_RETRY_TIMES + 1
+
+
 # ── P1: Dry-run & List-files (unit tests) ───────────────────────
 
 class TestDryRun:
